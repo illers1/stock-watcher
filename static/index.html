@@ -49,6 +49,24 @@
     <div class="stat"><span class="stat-label">Average change</span><span id="sum-avg" class="stat-value">—</span></div>
   </section>
 
+  <details class="weights" id="weights">
+    <summary>
+      <span>Rating method: <strong id="preset-name">1-Month Sprint</strong></span>
+      <span class="weights-hint">how the 0&ndash;100 score is weighted</span>
+    </summary>
+    <div class="weights-body">
+      <div class="preset-row" id="presets"></div>
+      <label class="horizon">
+        Competition horizon
+        <input type="range" id="horizon" min="7" max="90" step="1" value="30">
+        <output id="horizon-out">30 days</output>
+      </label>
+      <div class="sliders" id="sliders"></div>
+      <p class="section-hint">Weights re-score instantly &mdash; no data is refetched.
+        A factor with no data is dropped and the rest are renormalised.</p>
+    </div>
+  </details>
+
   <div class="table-wrap" id="table-wrap">
     <table class="quotes" id="quotes">
       <thead>
@@ -60,6 +78,7 @@
           <th class="col-range col-hide">Day range</th>
           <th class="col-num col-hide" data-sort="marketCap">Mkt cap</th>
           <th class="col-num col-hide" data-sort="volume">Volume</th>
+          <th class="col-num col-score" data-sort="score">Rating</th>
           <th class="col-act"><span class="sr-only">Remove</span></th>
         </tr>
       </thead>
@@ -73,11 +92,14 @@
   </p>
 </main>
 
+<div class="dp-backdrop" id="dp-backdrop" hidden></div>
+<aside class="detail-panel" id="detail-panel" hidden aria-label="Stock analysis"></aside>
+
 <footer class="foot">
   <span>Quotes via CNBC's public feed and may be delayed. Information only — not investment advice.</span>
   <button id="clear" class="linkbtn">Clear watchlist</button>
 </footer>
 
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

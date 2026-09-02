@@ -1,9 +1,16 @@
 /* Stock Watcher — the watchlist lives in localStorage; quotes come from /api. */
+import { parseAnalysis } from "./analyze.mjs";
+import { scoreAnalysis, scoreBand, FACTORS, PRESETS, DEFAULT_HORIZON_DAYS } from "./score.mjs";
+import { renderDetail } from "./detail.mjs";
+
 (function () {
   "use strict";
 
   var STORE_KEY = "stockwatcher.symbols.v1";
   var PREF_KEY = "stockwatcher.prefs.v1";
+  var ANALYSIS_KEY = "stockwatcher.analysis.v2";
+  var ANALYSIS_TTL_MS = 30 * 60 * 1000;   // fundamentals move slowly
+  var ANALYSIS_CONCURRENCY = 3;
   var SYMBOL_OK = /^[A-Z0-9.\-=^&:$]{1,24}$/;
 
   /* A small offline index so the autocomplete is useful even when the upstream
@@ -47,15 +54,27 @@
   var els = {};
   ["rows", "empty", "status", "banner", "refresh", "interval", "clear", "summary",
    "sum-count", "sum-up", "sum-down", "sum-avg", "quotes", "suggestions",
-   "symbol-input", "add-form", "table-wrap"].forEach(function (id) {
+   "symbol-input", "add-form", "table-wrap", "weights", "presets", "sliders",
+   "preset-name", "horizon", "horizon-out", "detail-panel", "dp-backdrop"].forEach(function (id) {
     els[id.replace(/-(\w)/g, function (m, c) { return c.toUpperCase(); })] =
       document.getElementById(id);
   });
 
   var symbols = load(STORE_KEY, ["AAPL", "MSFT", "NVDA", "SPY"]);
-  var prefs = load(PREF_KEY, { interval: 60, sortKey: null, sortDir: -1 });
+  var prefs = load(PREF_KEY, {
+    interval: 60, sortKey: null, sortDir: -1,
+    preset: "sprint", weights: null, horizonDays: DEFAULT_HORIZON_DAYS,
+  });
+  if (!prefs.weights) prefs.weights = Object.assign({}, PRESETS.sprint.weights);
+  if (!prefs.horizonDays) prefs.horizonDays = DEFAULT_HORIZON_DAYS;
+  if (!prefs.preset) prefs.preset = "sprint";
   var quotes = {};      // symbol -> latest payload
   var lastPrice = {};   // symbol -> price at previous render, for the tick flash
+  var analyses = loadAnalyses();   // symbol -> {at, model}
+  var scores = {};                 // symbol -> scored result, recomputed on weight change
+  var calendarEvents = {};         // symbol -> upcoming earnings event
+  var analysing = {};              // symbol -> true while a fetch is in flight
+  var openSymbol = null;
   var timer = null;
   var inFlight = false;
 
@@ -131,6 +150,159 @@
       fmtPrice(e.price) + ' (' + fmtPct(e.changePercent) + ')</span>';
   }
 
+
+  /* ---------------- analysis ---------------- */
+
+  function loadAnalyses() {
+    var raw = load(ANALYSIS_KEY, {});
+    var out = {};
+    // Parsed models are cached rather than the raw bundles: a fraction of the
+    // size, and re-scoring on a weight change needs nothing else.
+    Object.keys(raw || {}).forEach(function (sym) {
+      var entry = raw[sym];
+      if (entry && entry.model && Date.now() - entry.at < ANALYSIS_TTL_MS) out[sym] = entry;
+    });
+    return out;
+  }
+
+  function persistAnalyses() {
+    var slim = {};
+    symbols.forEach(function (s) { if (analyses[s]) slim[s] = analyses[s]; });
+    save(ANALYSIS_KEY, slim);
+  }
+
+  function rescore() {
+    scores = {};
+    Object.keys(analyses).forEach(function (sym) {
+      var model = analyses[sym] && analyses[sym].model;
+      if (model) scores[sym] = scoreAnalysis(model, prefs.weights, prefs.horizonDays);
+    });
+  }
+
+  function fetchCalendar() {
+    return fetch("/api/calendar?days=" + encodeURIComponent(Math.max(7, prefs.horizonDays)))
+      .then(function (r) { return r.json(); })
+      .then(function (d) { calendarEvents = d.events || {}; })
+      .catch(function () { calendarEvents = {}; });
+  }
+
+  function analyseSymbol(sym) {
+    if (analysing[sym]) return Promise.resolve();
+    var cached = analyses[sym];
+    if (cached && Date.now() - cached.at < ANALYSIS_TTL_MS) return Promise.resolve();
+    analysing[sym] = true;
+    render();
+
+    return fetch("/api/analysis?symbol=" + encodeURIComponent(sym))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || d.error) throw new Error(d && d.error ? d.error : "no data");
+        var model = parseAnalysis(d.sources, sym, calendarEvents[sym] || null);
+        analyses[sym] = { at: Date.now(), model: model };
+        scores[sym] = scoreAnalysis(model, prefs.weights, prefs.horizonDays);
+        persistAnalyses();
+      })
+      .catch(function () {
+        analyses[sym] = { at: Date.now(), model: null, failed: true };
+      })
+      .then(function () {
+        delete analysing[sym];
+        render();
+        if (openSymbol === sym) openDetail(sym);
+      });
+  }
+
+  /** Work through the watchlist a few symbols at a time. */
+  function analyseAll() {
+    var queue = symbols.filter(function (s) {
+      var c = analyses[s];
+      return !analysing[s] && (!c || Date.now() - c.at >= ANALYSIS_TTL_MS);
+    });
+    if (!queue.length) return Promise.resolve();
+
+    var index = 0;
+    function next() {
+      if (index >= queue.length) return Promise.resolve();
+      return analyseSymbol(queue[index++]).then(next);
+    }
+    var lanes = [];
+    for (var i = 0; i < Math.min(ANALYSIS_CONCURRENCY, queue.length); i++) lanes.push(next());
+    return Promise.all(lanes);
+  }
+
+  /* ---------------- detail panel ---------------- */
+
+  function openDetail(sym) {
+    var entry = analyses[sym];
+    openSymbol = sym;
+    els.dpBackdrop.hidden = false;
+    els.detailPanel.hidden = false;
+    document.body.classList.add("panel-open");
+
+    if (!entry || !entry.model) {
+      els.detailPanel.innerHTML =
+        '<header class="dp-head"><div><h2>' + esc(sym) + '</h2>' +
+        '<p class="dp-sub">' + (entry && entry.failed ? "Analysis unavailable" : "Analysing\u2026") + '</p></div>' +
+        '<button class="dp-close" data-close aria-label="Close">\u00d7</button></header>' +
+        (entry && entry.failed
+          ? '<p class="muted" style="padding:20px">Could not load analysis for this symbol. It may not be a US-listed equity.</p>'
+          : '<div class="dp-loading"><span></span><span></span><span></span></div>');
+      if (!entry) analyseSymbol(sym);
+      return;
+    }
+    els.detailPanel.innerHTML = renderDetail(entry.model, scores[sym] ||
+      scoreAnalysis(entry.model, prefs.weights, prefs.horizonDays), prefs, rankOf(sym));
+    els.detailPanel.scrollTop = 0;
+  }
+
+  /** Where this symbol sits on the watchlist by rating — the view that matters
+      when the goal is picking between them rather than judging one alone. */
+  function rankOf(sym) {
+    var ranked = symbols
+      .filter(function (s) { return scores[s] && scores[s].overall !== null; })
+      .sort(function (a, b) { return scores[b].overall - scores[a].overall; });
+    var i = ranked.indexOf(sym);
+    return i === -1 ? null : { position: i + 1, total: ranked.length };
+  }
+
+  function closeDetail() {
+    openSymbol = null;
+    els.detailPanel.hidden = true;
+    els.dpBackdrop.hidden = true;
+    document.body.classList.remove("panel-open");
+  }
+
+  /* ---------------- weight controls ---------------- */
+
+  function renderWeightControls() {
+    els.presets.innerHTML = Object.keys(PRESETS).map(function (key) {
+      return '<button type="button" class="preset' + (prefs.preset === key ? " on" : "") +
+        '" data-preset="' + key + '">' + esc(PRESETS[key].label) + '</button>';
+    }).join("") + '<button type="button" class="preset' +
+      (prefs.preset === "custom" ? " on" : "") + '" data-preset="custom" hidden>Custom</button>';
+
+    els.sliders.innerHTML = FACTORS.map(function (f) {
+      var w = Number(prefs.weights[f.key] || 0);
+      return '<label class="slider" title="' + esc(f.hint) + '">' +
+        '<span class="sl-name">' + esc(f.label) + '</span>' +
+        '<input type="range" min="0" max="40" step="1" value="' + w + '" data-weight="' + f.key + '">' +
+        '<output>' + w + '</output></label>';
+    }).join("");
+
+    els.presetName.textContent = PRESETS[prefs.preset]
+      ? PRESETS[prefs.preset].label : "Custom";
+    els.horizon.value = String(prefs.horizonDays);
+    els.horizonOut.textContent = prefs.horizonDays + " days";
+  }
+
+  function applyWeights(save_) {
+    rescore();
+    renderWeightControls();
+    render();
+    if (openSymbol) openDetail(openSymbol);
+    if (save_ !== false) save(PREF_KEY, prefs);
+  }
+
   /* ---------------- rendering ---------------- */
 
   function ordered() {
@@ -139,7 +311,13 @@
     var key = prefs.sortKey, dir = prefs.sortDir;
     return list.slice().sort(function (a, b) {
       if (key === "symbol") return String(a.symbol).localeCompare(String(b.symbol)) * dir;
-      var av = a[key], bv = b[key];
+      var av, bv;
+      if (key === "score") {
+        av = scores[a.symbol] ? scores[a.symbol].overall : null;
+        bv = scores[b.symbol] ? scores[b.symbol].overall : null;
+      } else {
+        av = a[key]; bv = b[key];
+      }
       var aMissing = av === null || av === undefined;
       var bMissing = bv === null || bv === undefined;
       if (aMissing && bMissing) return 0;
@@ -156,13 +334,13 @@
 
     if (q.pending) {
       return '<tr data-symbol="' + esc(sym) + '"><td class="sym"><span class="sym-code">' +
-        esc(sym) + '</span></td><td colspan="6" class="sub">Loading…</td>' + removeCell + '</tr>';
+        esc(sym) + '</span></td><td colspan="7" class="sub">Loading…</td>' + removeCell + '</tr>';
     }
     if (q.error) {
       return '<tr class="err" data-symbol="' + esc(sym) + '">' +
         '<td class="sym"><span class="sym-code">' + esc(sym) + '</span>' +
         '<span class="sym-name err-text">' + esc(q.error) + '</span></td>' +
-        '<td colspan="6" class="sub">No quote available — check the symbol, then remove it.</td>' +
+        '<td colspan="7" class="sub">No quote available — check the symbol, then remove it.</td>' +
         removeCell + '</tr>';
     }
 
@@ -182,7 +360,22 @@
       '<td class="sub col-hide">' + rangeBar(q) + '</td>' +
       '<td class="sub col-hide">' + fmtBig(q.marketCap) + '</td>' +
       '<td class="sub col-hide">' + fmtBig(q.volume) + '</td>' +
+      scoreCell(sym) +
       removeCell + '</tr>';
+  }
+
+  function scoreCell(sym) {
+    if (analysing[sym]) return '<td class="score"><span class="score-wait">•••</span></td>';
+    var sc = scores[sym];
+    if (!sc || sc.overall === null || sc.overall === undefined) {
+      var failed = analyses[sym] && analyses[sym].failed;
+      return '<td class="score"><span class="sub">' + (failed ? "n/a" : "—") + '</span></td>';
+    }
+    var band = scoreBand(sc.overall);
+    var low = sc.confidence < 0.6 ? " score-thin" : "";
+    return '<td class="score"><span class="score-badge tone-' + band.tone + low +
+      '" title="' + esc(band.label) + ' · confidence ' + Math.round(sc.confidence * 100) +
+      '%">' + Math.round(sc.overall) + '</span></td>';
   }
 
   function render() {
@@ -285,6 +478,7 @@
     save(STORE_KEY, symbols);
     render();
     refresh();
+    analyseSymbol(sym);
   }
 
   function removeSymbol(sym) {
@@ -424,7 +618,38 @@
 
   els.rows.addEventListener("click", function (e) {
     var btn = e.target.closest("[data-remove]");
-    if (btn) removeSymbol(btn.dataset.remove);
+    if (btn) { removeSymbol(btn.dataset.remove); return; }
+    var row = e.target.closest("tr[data-symbol]");
+    if (row) openDetail(row.dataset.symbol);
+  });
+
+  els.detailPanel.addEventListener("click", function (e) {
+    if (e.target.closest("[data-close]")) closeDetail();
+  });
+  els.dpBackdrop.addEventListener("click", closeDetail);
+
+  els.presets.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-preset]");
+    if (!btn) return;
+    var key = btn.dataset.preset;
+    if (!PRESETS[key]) return;
+    prefs.preset = key;
+    prefs.weights = Object.assign({}, PRESETS[key].weights);
+    applyWeights();
+  });
+
+  els.sliders.addEventListener("input", function (e) {
+    var input = e.target.closest("[data-weight]");
+    if (!input) return;
+    prefs.weights[input.dataset.weight] = Number(input.value);
+    prefs.preset = "custom";
+    applyWeights();
+  });
+
+  els.horizon.addEventListener("input", function () {
+    prefs.horizonDays = Number(els.horizon.value);
+    els.horizonOut.textContent = prefs.horizonDays + " days";
+    applyWeights();
   });
 
   els.quotes.querySelector("thead").addEventListener("click", function (e) {
@@ -462,6 +687,7 @@
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
     if (e.key === "/") { e.preventDefault(); els.symbolInput.focus(); }
     else if (e.key === "r" || e.key === "R") refresh();
+    else if (e.key === "Escape" && openSymbol) closeDetail();
   });
 
   // Catch up as soon as the tab is looked at again.
@@ -472,7 +698,10 @@
   /* ---------------- boot ---------------- */
 
   els.interval.value = String(prefs.interval);
+  rescore();
+  renderWeightControls();
   render();
   refresh();
   scheduleRefresh();
+  fetchCalendar().then(analyseAll);
 })();

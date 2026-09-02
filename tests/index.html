@@ -11,9 +11,15 @@
 <pre id="out">running…</pre>
 <div id="summary"></div>
 <script type="module">
-import { toFloat, toBig, parseSymbols, buildQuotes } from "../netlify/lib/format.mjs";
-import quotesFn, { config as quotesCfg } from "../netlify/functions/quotes.mjs";
-import searchFn, { config as searchCfg } from "../netlify/functions/search.mjs";
+/* Imported dynamically with a cache-buster: a plain static file server sends no
+   cache headers, so browsers apply heuristic caching and a test run can quietly
+   check a stale copy of the very file you just edited. */
+const v = "?v=" + Date.now();
+const { toFloat, toBig, parseSymbols, buildQuotes } = await import("../netlify/lib/format.mjs" + v);
+const { default: quotesFn, config: quotesCfg } = await import("../netlify/functions/quotes.mjs" + v);
+const { default: searchFn, config: searchCfg } = await import("../netlify/functions/search.mjs" + v);
+const { parseAnalysis, classifyInsiderTrade } = await import("../static/analyze.mjs" + v);
+const { band, scoreAnalysis, scoreBand, PRESETS, FACTORS } = await import("../static/score.mjs" + v);
 
 const results = [];
 const check = (name, ok, detail = "") => results.push({ name, ok, detail });
@@ -169,6 +175,88 @@ res = await withStub(() => { throw new TypeError("boom"); }, () =>
   searchFn(req("/api/search?q=apple")));
 body = await res.json();
 eq("search network failure degrades quietly", body.results, []);
+
+/* ============ analysis parsing and scoring ============ */
+const bundle = await (await fetch("./analysis-fixture.json")).json();
+
+/* -- insider classification: the vocabulary that caused a real bug -- */
+eq("classify Buy",            classifyInsiderTrade("Buy"), "buy");
+eq("classify Sell",           classifyInsiderTrade("Sell"), "sell");
+eq("classify Automatic Sell", classifyInsiderTrade("Automatic Sell"), "planned-sell");
+eq("classify vesting is NOT a buy",
+   classifyInsiderTrade("Acquisition (Non Open Market)"), "grant");
+eq("classify withholding is NOT a sell",
+   classifyInsiderTrade("Disposition (Non Open Market)"), "withholding");
+eq("classify Option Execute",  classifyInsiderTrade("Option Execute"), "exercise");
+eq("classify blank",           classifyInsiderTrade(""), "other");
+
+/* -- band interpolation -- */
+eq("band below range", band(-100, [[0, 10], [10, 90]]), 10);
+eq("band above range", band(999, [[0, 10], [10, 90]]), 90);
+eq("band midpoint", band(5, [[0, 10], [10, 90]]), 50);
+eq("band on a knot", band(10, [[0, 10], [10, 90]]), 90);
+eq("band null input", band(null, [[0, 10], [10, 90]]), null);
+eq("band NaN input", band(NaN, [[0, 10], [10, 90]]), null);
+eq("band unsorted points still interpolate", band(5, [[10, 90], [0, 10]]), 50);
+
+/* -- parse the real captured bundle -- */
+const model = parseAnalysis(bundle.sources, "NVDA",
+  { date: "2026-09-20", time: "time-after-hours", epsForecast: "1.23" });
+eq("parses the name", model.name, "NVIDIA Corporation");
+eq("parses the sector", model.sector, "Technology");
+check("parses a price", model.price > 0, String(model.price));
+check("parses fundamentals", model.fundamentals?.pe > 0, String(model.fundamentals?.pe));
+check("computes volatility", model.momentum?.volatility > 0, String(model.momentum?.volatility));
+check("drawdown is negative or zero", model.momentum?.maxDrawdown <= 0, String(model.momentum?.maxDrawdown));
+check("builds a price series", (model.momentum?.points?.length ?? 0) > 20, String(model.momentum?.points?.length));
+check("parses analyst targets", model.analysts?.mean > 0, String(model.analysts?.mean));
+check("parses earnings history", (model.earnings?.history?.length ?? 0) > 0, "");
+eq("earnings event days away is computed", typeof model.earnings?.next?.daysAway, "number");
+check("news parsed", Array.isArray(model.news), "");
+eq("grants are not counted as buys", model.insiders.counts.buy, 0);
+check("grants are counted as grants", model.insiders.counts.grant > 0, String(model.insiders.counts.grant));
+check("every source reported ok", Object.values(model.sources).every(v => v === "ok"),
+      JSON.stringify(model.sources));
+
+/* -- scoring -- */
+const scored = scoreAnalysis(model, PRESETS.sprint.weights, 30);
+check("overall score is 0-100", scored.overall >= 0 && scored.overall <= 100, String(scored.overall));
+eq("one entry per factor", scored.factors.length, FACTORS.length);
+check("full data gives full confidence", scored.confidence > 0.99, String(scored.confidence));
+check("effective weights sum to 1",
+  Math.abs(scored.factors.reduce((a, f) => a + f.effectiveWeight, 0) - 1) < 1e-9,
+  String(scored.factors.reduce((a, f) => a + f.effectiveWeight, 0)));
+
+/* A missing factor must be dropped and the rest renormalised, never scored 0. */
+const stripped = { ...model, fundamentals: null, insiders: null, analysts: null };
+const partial = scoreAnalysis(stripped, PRESETS.sprint.weights, 30);
+check("partial data still scores", partial.overall !== null, String(partial.overall));
+check("partial data lowers confidence", partial.confidence < scored.confidence,
+      `${partial.confidence} vs ${scored.confidence}`);
+check("missing factors are marked unavailable",
+  partial.factors.filter(f => ["valuation", "quality", "sentiment", "insider"].includes(f.key))
+    .every(f => !f.available), "");
+check("surviving weights still sum to 1",
+  Math.abs(partial.factors.reduce((a, f) => a + f.effectiveWeight, 0) - 1) < 1e-9, "");
+check("dropping factors does not force the score down",
+  partial.overall > 20, String(partial.overall));
+
+/* Weights must actually change the answer, and presets must be well-formed. */
+const asValue = scoreAnalysis(model, PRESETS.value.weights, 30);
+check("different weights give a different score",
+  Math.abs(asValue.overall - scored.overall) > 0.01,
+  `${asValue.overall} vs ${scored.overall}`);
+for (const [key, p] of Object.entries(PRESETS)) {
+  const missing = FACTORS.filter(f => !(f.key in p.weights)).map(f => f.key);
+  eq(`preset ${key} covers every factor`, missing, []);
+}
+const empty = scoreAnalysis({ symbol: "X", sources: {} }, PRESETS.sprint.weights, 30);
+eq("an empty analysis scores null", empty.overall, null);
+eq("an empty analysis has zero confidence", empty.confidence, 0);
+
+eq("scoreBand strong", scoreBand(80).label, "Strong");
+eq("scoreBand poor", scoreBand(10).label, "Poor");
+eq("scoreBand null", scoreBand(null).label, "No data");
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

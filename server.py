@@ -13,6 +13,7 @@ when it is unavailable the UI falls back to a built-in list of common symbols.
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -24,6 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -243,6 +245,106 @@ def search(query):
     return results, None
 
 
+
+# --------------------------------------------------------------------------
+# Deep analysis. These mirror netlify/lib/sources.mjs: the server only fetches
+# and bundles, and static/analyze.mjs does all the interpreting, so the two
+# runtimes never drift apart on how a number is read.
+# --------------------------------------------------------------------------
+
+NASDAQ = "https://api.nasdaq.com/api"
+CALENDAR_URL = NASDAQ + "/calendar/earnings"
+
+
+def source_urls(symbol):
+    enc = urllib.parse.quote(symbol)
+    today = datetime.date.today()
+    start = today - datetime.timedelta(days=180)
+    quote_qs = urllib.parse.urlencode({
+        "symbols": symbol, "requestMethod": "itv", "noform": "1", "partnerId": "2",
+        "fund": "1", "exthrs": "1", "output": "json", "events": "1",
+    })
+    history_qs = urllib.parse.urlencode({
+        "assetclass": "stocks", "fromdate": start.isoformat(),
+        "todate": today.isoformat(), "limit": "130",
+    })
+    news_qs = urllib.parse.urlencode({
+        "q": "%s|stocks" % symbol, "offset": "0", "limit": "8", "fallback": "true",
+    })
+    return {
+        "quote": QUOTE_URL + "?" + quote_qs,
+        "summary": "%s/quote/%s/summary?assetclass=stocks" % (NASDAQ, enc),
+        "profile": "%s/company/%s/company-profile" % (NASDAQ, enc),
+        "target": "%s/analyst/%s/targetprice" % (NASDAQ, enc),
+        "ratings": "%s/analyst/%s/ratings" % (NASDAQ, enc),
+        "earnings": "%s/company/%s/earnings-surprise" % (NASDAQ, enc),
+        "insiders": "%s/company/%s/insider-trades?limit=15&type=ALL"
+                    "&sortname=lastDate&sorttype=DESC" % (NASDAQ, enc),
+        "short": "%s/quote/%s/short-interest?assetClass=stocks" % (NASDAQ, enc),
+        "news": "%s/news/topic/articlebysymbol?%s" % (NASDAQ, news_qs),
+        "history": "%s/quote/%s/historical?%s" % (NASDAQ, enc, history_qs),
+    }
+
+
+def raw_json(url, timeout=10):
+    """Unthrottled fetch used for the analysis fan-out."""
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
+
+
+def fetch_source(item):
+    key, url = item
+    try:
+        return key, raw_json(url)
+    except urllib.error.HTTPError as exc:
+        return key, {"error": "HTTP %s" % exc.code}
+    except Exception as exc:
+        return key, {"error": type(exc).__name__}
+
+
+def fetch_analysis(symbol):
+    urls = source_urls(symbol)
+    with ThreadPoolExecutor(max_workers=len(urls)) as pool:
+        return dict(pool.map(fetch_source, urls.items()))
+
+
+def fetch_calendar(days):
+    """Walk the earnings calendar forward and index it by symbol."""
+    today = datetime.date.today()
+    dates = []
+    for n in range(days):
+        d = today + datetime.timedelta(days=n)
+        if d.weekday() < 5:
+            dates.append(d.isoformat())
+
+    def one(date_str):
+        try:
+            data = raw_json("%s?date=%s" % (CALENDAR_URL, date_str), timeout=8)
+            return date_str, (data.get("data") or {}).get("rows") or []
+        except Exception:
+            return date_str, []
+
+    events = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        for date_str, rows in sorted(pool.map(one, dates)):
+            for row in rows:
+                sym = str(row.get("symbol") or "").upper()
+                if not sym or sym in events:
+                    continue  # keep the soonest date per symbol
+                events[sym] = {
+                    "date": date_str,
+                    "time": row.get("time"),
+                    "epsForecast": row.get("epsForecast"),
+                    "fiscalQuarterEnding": row.get("fiscalQuarterEnding"),
+                    "name": row.get("name"),
+                }
+    return {
+        "events": events, "daysScanned": len(dates),
+        "from": dates[0] if dates else None, "to": dates[-1] if dates else None,
+    }
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=STATIC_DIR, **kwargs)
@@ -284,6 +386,26 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json({"results": [], "error": None})
             results, error = search(query[:40])
             return self.send_json({"results": results, "error": error})
+
+        if parsed.path == "/api/analysis":
+            symbol = (params.get("symbol") or [""])[0].strip().upper()
+            if not symbol or not SYMBOL_RE.match(symbol):
+                return self.send_json({"symbol": symbol, "sources": {},
+                                       "error": "A valid symbol is required"})
+            sources = fetch_analysis(symbol)
+            failed = [k for k, v in sources.items() if isinstance(v, dict) and v.get("error")]
+            return self.send_json({"symbol": symbol, "sources": sources,
+                                   "asOf": time.time(), "failed": failed, "error": None})
+
+        if parsed.path == "/api/calendar":
+            try:
+                days = int((params.get("days") or ["30"])[0])
+            except ValueError:
+                days = 30
+            days = max(1, min(60, days))
+            result = fetch_calendar(days)
+            result.update({"asOf": time.time(), "error": None})
+            return self.send_json(result)
 
         if parsed.path == "/":
             self.path = "/index.html"
