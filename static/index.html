@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock Watcher</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📈</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>Stock Watcher</h1>
+  </div>
+  <div class="topbar-right">
+    <span id="status" class="status" role="status" aria-live="polite">Loading…</span>
+    <label class="sel">
+      <span class="sr-only">Auto-refresh interval</span>
+      <select id="interval" title="Auto-refresh interval">
+        <option value="0">Manual</option>
+        <option value="15">15s</option>
+        <option value="30">30s</option>
+        <option value="60" selected>1m</option>
+        <option value="300">5m</option>
+      </select>
+    </label>
+    <button id="refresh" class="btn" title="Refresh now (press R)">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <form id="add-form" class="addbar" autocomplete="off">
+    <div class="combo">
+      <input id="symbol-input" type="text" placeholder="Add a symbol or company — e.g. AAPL, Tesla, .SPX"
+             aria-label="Add a stock to the watchlist" role="combobox" aria-expanded="false"
+             aria-controls="suggestions" aria-autocomplete="list" spellcheck="false">
+      <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
+    </div>
+    <button type="submit" class="btn btn-primary">Add</button>
+  </form>
+
+  <p id="banner" class="banner" hidden></p>
+
+  <section id="summary" class="summary" hidden>
+    <div class="stat"><span class="stat-label">Watching</span><span id="sum-count" class="stat-value">0</span></div>
+    <div class="stat"><span class="stat-label">Advancing</span><span id="sum-up" class="stat-value up">0</span></div>
+    <div class="stat"><span class="stat-label">Declining</span><span id="sum-down" class="stat-value down">0</span></div>
+    <div class="stat"><span class="stat-label">Average change</span><span id="sum-avg" class="stat-value">—</span></div>
+  </section>
+
+  <div class="table-wrap" id="table-wrap">
+    <table class="quotes" id="quotes">
+      <thead>
+        <tr>
+          <th class="col-sym"  data-sort="symbol">Symbol</th>
+          <th class="col-num"  data-sort="price">Market value</th>
+          <th class="col-num"  data-sort="change">Change</th>
+          <th class="col-num"  data-sort="changePercent">% Change</th>
+          <th class="col-range col-hide">Day range</th>
+          <th class="col-num col-hide" data-sort="marketCap">Mkt cap</th>
+          <th class="col-num col-hide" data-sort="volume">Volume</th>
+          <th class="col-act"><span class="sr-only">Remove</span></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <p id="empty" class="empty" hidden>
+    Your watchlist is empty. Add a symbol above to start tracking it — the list is
+    saved in this browser, so it is still here next time you open the page.
+  </p>
+</main>
+
+<footer class="foot">
+  <span>Quotes via CNBC's public feed and may be delayed. Information only — not investment advice.</span>
+  <button id="clear" class="linkbtn">Clear watchlist</button>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
