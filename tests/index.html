@@ -1,0 +1,181 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Stock Watcher tests</title>
+<style>
+  body { font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 24px; }
+  h1 { font-size: 15px; }
+  .pass { color: #0b8a4a; } .fail { color: #cf2b3d; font-weight: 700; }
+  #summary { margin-top: 16px; font-weight: 700; }
+</style>
+<h1>Stock Watcher — quote parsing and API function tests</h1>
+<pre id="out">running…</pre>
+<div id="summary"></div>
+<script type="module">
+import { toFloat, toBig, parseSymbols, buildQuotes } from "../netlify/lib/format.mjs";
+import quotesFn, { config as quotesCfg } from "../netlify/functions/quotes.mjs";
+import searchFn, { config as searchCfg } from "../netlify/functions/search.mjs";
+
+const results = [];
+const check = (name, ok, detail = "") => results.push({ name, ok, detail });
+const eq = (name, got, want) =>
+  check(name, JSON.stringify(got) === JSON.stringify(want),
+        `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
+
+const fixture = await (await fetch("./fixture.json")).json();
+
+/* ============ parsing ============ */
+
+eq("toFloat plain", toFloat("325.13"), 325.13);
+eq("toFloat signed", toFloat("+8.28"), 8.28);
+eq("toFloat negative", toFloat("-54.67"), -54.67);
+eq("toFloat unicode minus", toFloat("\u2212" + "54.67"), -54.67);
+eq("toFloat commas", toFloat("7,631.47"), 7631.47);
+eq("toFloat percent", toFloat("+2.61%"), 2.61);
+eq("toFloat UNCH", toFloat("UNCH"), null);
+eq("toFloat empty", toFloat(""), null);
+eq("toFloat null", toFloat(null), null);
+eq("toFloat number", toFloat(12.5), 12.5);
+eq("toFloat NaN", toFloat(NaN), null);
+eq("toFloat garbage", toFloat("abc"), null);
+
+eq("toBig T", toBig("4.745T"), 4.745e12);
+eq("toBig M", toBig("49.8M"), 49.8e6);
+eq("toBig B", toBig("670B"), 670e9);
+eq("toBig raw", toBig("49,839,873"), 49839873);
+eq("toBig null", toBig(null), null);
+
+eq("parseSymbols dedupes + uppercases", parseSymbols("aapl,AAPL, msft "), ["AAPL", "MSFT"]);
+eq("parseSymbols keeps index/crypto", parseSymbols(".SPX,BTC.CM="), [".SPX", "BTC.CM="]);
+eq("parseSymbols drops junk", parseSymbols("AAPL,<script>,MSFT"), ["AAPL", "MSFT"]);
+eq("parseSymbols caps at 60",
+   parseSymbols(Array.from({length: 80}, (_, i) => "S" + i).join(",")).length, 60);
+
+const quotes = buildQuotes(fixture, ["AAPL", ".SPX", "BTC.CM=", "ZZZQQ", "OMITTED"]);
+const by = Object.fromEntries(quotes.map(q => [q.symbol, q]));
+eq("order preserved", quotes.map(q => q.symbol), ["AAPL", ".SPX", "BTC.CM=", "ZZZQQ", "OMITTED"]);
+eq("AAPL price", by.AAPL.price, 325.13);
+eq("AAPL change", by.AAPL.change, 8.28);
+eq("AAPL pct", by.AAPL.changePercent, 2.61);
+eq("AAPL name", by.AAPL.name, "Apple Inc.");
+check("AAPL market cap parsed", by.AAPL.marketCap > 4e12, String(by.AAPL.marketCap));
+eq("AAPL extended price", by.AAPL.extended.price, 325.14);
+check("AAPL extended pct derived when feed says UNCH",
+  Math.abs(by.AAPL.extended.changePercent - ((325.14 - 325.13) / 325.13) * 100) < 1e-9,
+  String(by.AAPL.extended.changePercent));
+eq(".SPX negative change", by[".SPX"].change, -54.67);
+eq(".SPX negative pct keeps its sign", by[".SPX"].changePercent, -0.71);
+eq(".SPX has no extended quote", by[".SPX"].extended, null);
+eq(".SPX has no market cap", by[".SPX"].marketCap, null);
+check("crypto parsed", by["BTC.CM="].price > 1000, String(by["BTC.CM="].price));
+eq("unknown symbol -> error", by.ZZZQQ.error, "Symbol not found");
+eq("unknown symbol has no price", by.ZZZQQ.price, undefined);
+eq("symbol omitted by upstream -> error", by.OMITTED.error, "Symbol not found");
+
+/* ============ API functions ============ */
+const realFetch = window.fetch;
+let calls = [];
+async function withStub(stub, fn) {
+  calls = [];
+  window.fetch = async (url, opts) => { calls.push({ url: String(url), opts }); return stub(url, opts); };
+  try { return await fn(); } finally { window.fetch = realFetch; }
+}
+const ok = (body) => new Response(JSON.stringify(body), { status: 200 });
+const req = (path) => ({ url: "https://example.netlify.app" + path });
+
+eq("quotes route", quotesCfg.path, "/api/quotes");
+eq("search route", searchCfg.path, "/api/search");
+
+let res = await withStub(() => ok(fixture), () =>
+  quotesFn(req("/api/quotes?symbols=AAPL,.SPX,BTC.CM%3D,ZZZQQ")));
+let body = await res.json();
+eq("quotes status", res.status, 200);
+eq("quotes content-type", res.headers.get("Content-Type"), "application/json; charset=utf-8");
+check("quotes sets a CDN cache header",
+  /max-age=15/.test(res.headers.get("Netlify-CDN-Cache-Control") ?? ""),
+  res.headers.get("Netlify-CDN-Cache-Control"));
+eq("quotes symbol order", body.quotes.map(q => q.symbol), ["AAPL", ".SPX", "BTC.CM=", "ZZZQQ"]);
+eq("quotes no error", body.error, null);
+check("quotes asOf is a timestamp", typeof body.asOf === "number" && body.asOf > 1e9, String(body.asOf));
+eq("quotes prices the first row", body.quotes[0].price, 325.13);
+eq("quotes flags the bad symbol", body.quotes[3].error, "Symbol not found");
+
+eq("exactly one upstream call", calls.length, 1);
+const upstream = new URL(calls[0].url);
+eq("upstream host", upstream.host, "quote.cnbc.com");
+eq("symbols are pipe-joined", upstream.searchParams.get("symbols"), "AAPL|.SPX|BTC.CM=|ZZZQQ");
+eq("extended hours requested", upstream.searchParams.get("exthrs"), "1");
+check("sends a User-Agent", !!calls[0].opts?.headers?.["User-Agent"], "");
+
+res = await withStub(() => ok(fixture), () => quotesFn(req("/api/quotes")));
+body = await res.json();
+eq("no symbols -> empty result", body.quotes, []);
+eq("no symbols -> no upstream call", calls.length, 0);
+
+res = await withStub(() => ok(fixture), () => quotesFn(req("/api/quotes?symbols=%3Cscript%3E")));
+body = await res.json();
+eq("junk symbols -> no upstream call", calls.length, 0);
+eq("junk symbols -> empty result", body.quotes, []);
+
+res = await withStub(() => new Response("Too Many Requests", { status: 429 }), () =>
+  quotesFn(req("/api/quotes?symbols=AAPL")));
+body = await res.json();
+eq("upstream 429 still returns 200", res.status, 200);
+eq("upstream 429 error message", body.error, "Quote service returned HTTP 429");
+eq("upstream 429 empty quotes", body.quotes, []);
+eq("upstream 429 null asOf", body.asOf, null);
+
+res = await withStub(() => { throw new TypeError("connection refused"); }, () =>
+  quotesFn(req("/api/quotes?symbols=AAPL")));
+body = await res.json();
+eq("network failure handled", body.error, "Could not reach the quote service (TypeError)");
+
+res = await withStub(() => { const e = new Error("aborted"); e.name = "AbortError"; throw e; }, () =>
+  quotesFn(req("/api/quotes?symbols=AAPL")));
+body = await res.json();
+eq("timeout reported as a timeout", body.error, "Could not reach the quote service (timed out)");
+
+res = await withStub(() => new Response("<html>not json</html>", { status: 200 }), () =>
+  quotesFn(req("/api/quotes?symbols=AAPL")));
+body = await res.json();
+check("malformed JSON handled without throwing", typeof body.error === "string", body.error);
+
+const yahoo = { quotes: [
+  { symbol: "aapl", quoteType: "EQUITY", longname: "Apple Inc.", exchDisp: "NASDAQ" },
+  { symbol: "SPY",  quoteType: "ETF",    shortname: "SPDR S&P 500", exchange: "PCX" },
+  { symbol: "NOPE", quoteType: "OPTION", longname: "An option" },
+  { quoteType: "EQUITY", longname: "No symbol at all" },
+]};
+res = await withStub(() => ok(yahoo), () => searchFn(req("/api/search?q=apple")));
+body = await res.json();
+eq("search uppercases symbols and drops unsupported types",
+   body.results.map(r => r.symbol), ["AAPL", "SPY"]);
+eq("search picks the long name", body.results[0].name, "Apple Inc.");
+eq("search falls back to the short name", body.results[1].name, "SPDR S&P 500");
+eq("search falls back to the raw exchange", body.results[1].exchange, "PCX");
+eq("search no error", body.error, null);
+
+res = await withStub(() => ok(yahoo), () => searchFn(req("/api/search?q=")));
+body = await res.json();
+eq("blank query -> empty", body.results, []);
+eq("blank query -> no upstream call", calls.length, 0);
+
+res = await withStub(() => new Response("nope", { status: 429 }), () =>
+  searchFn(req("/api/search?q=apple")));
+body = await res.json();
+eq("search 429 degrades quietly", body.results, []);
+eq("search 429 error tag", body.error, "search-unavailable");
+
+res = await withStub(() => { throw new TypeError("boom"); }, () =>
+  searchFn(req("/api/search?q=apple")));
+body = await res.json();
+eq("search network failure degrades quietly", body.results, []);
+
+const failed = results.filter(r => !r.ok);
+document.getElementById("out").innerHTML = results.map(r =>
+  `<span class="${r.ok ? "pass" : "fail"}">${r.ok ? "PASS" : "FAIL"}</span>  ${r.name}` +
+  (r.ok ? "" : `\n        ${r.detail}`)).join("\n");
+document.getElementById("summary").textContent =
+  `${results.length - failed.length}/${results.length} passed` +
+  (failed.length ? `  \u2014 ${failed.length} FAILING` : "  \u2014 all green");
+document.getElementById("summary").className = failed.length ? "fail" : "pass";
+</script>

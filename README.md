@@ -65,6 +65,18 @@ Python 3.7+ and nothing else. Options: `--port 9000`, `--no-open`,
   `config.path` exports.
 - `netlify/lib/format.mjs` — the quote parsing, kept separate from the
   functions so it stays testable on its own.
+- `tests/` — 73 assertions over the parsing and both API handlers, run in a
+  browser with no test runner to install. Serve the repository root and open
+  `/tests/`:
+
+  ```bash
+  python3 -m http.server 8000
+  ```
+
+  then visit <http://localhost:8000/tests/>. The handlers are exercised with
+  `fetch` stubbed, so the tests need no network and cover the failure paths
+  (rate limiting, timeouts, malformed responses) as well as the happy one.
+  `tests/` sits outside the publish directory, so it is never deployed.
 - `server.py` — the local equivalent: serves `static/` and exposes the same two
   endpoints. It reimplements the parsing in Python so that running locally
   needs no Node; if you change how a field is parsed, change it in both
