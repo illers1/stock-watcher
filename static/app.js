@@ -295,12 +295,44 @@ import { renderDetail } from "./detail.mjs";
     els.horizonOut.textContent = prefs.horizonDays + " days";
   }
 
-  function applyWeights(save_) {
+  /* Update the controls in place. Rebuilding the markup on every input event
+     replaces the very element being dragged, which ends the drag after the
+     first pixel of movement — a click still worked, so the controls only
+     appeared to be click-only. Only a preset change rebuilds. */
+  function updateWeightOutputs() {
+    Array.prototype.forEach.call(els.sliders.querySelectorAll("[data-weight]"), function (input) {
+      var w = Number(prefs.weights[input.dataset.weight] || 0);
+      var out = input.nextElementSibling;
+      if (out && out.textContent !== String(w)) out.textContent = w;
+      if (document.activeElement !== input && Number(input.value) !== w) input.value = String(w);
+    });
+    Array.prototype.forEach.call(els.presets.querySelectorAll("[data-preset]"), function (b) {
+      b.classList.toggle("on", b.dataset.preset === prefs.preset);
+    });
+    els.presetName.textContent = PRESETS[prefs.preset] ? PRESETS[prefs.preset].label : "Custom";
+    els.horizonOut.textContent = prefs.horizonDays + " days";
+  }
+
+  var panelTimer = null;
+  var saveTimer = null;
+
+  function applyWeights(opts) {
+    opts = opts || {};
     rescore();
-    renderWeightControls();
+    if (opts.rebuild) renderWeightControls();
+    else updateWeightOutputs();
     render();
-    if (openSymbol) openDetail(openSymbol);
-    if (save_ !== false) save(PREF_KEY, prefs);
+
+    // Re-rendering the panel and writing localStorage on every frame of a drag
+    // is wasted work; both can settle once the slider comes to rest.
+    if (openSymbol) {
+      if (panelTimer) clearTimeout(panelTimer);
+      panelTimer = setTimeout(function () { if (openSymbol) openDetail(openSymbol); }, 120);
+    }
+    if (opts.save !== false) {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(function () { save(PREF_KEY, prefs); }, 250);
+    }
   }
 
   /* ---------------- rendering ---------------- */
@@ -635,7 +667,7 @@ import { renderDetail } from "./detail.mjs";
     if (!PRESETS[key]) return;
     prefs.preset = key;
     prefs.weights = Object.assign({}, PRESETS[key].weights);
-    applyWeights();
+    applyWeights({ rebuild: true });
   });
 
   els.sliders.addEventListener("input", function (e) {
@@ -648,7 +680,6 @@ import { renderDetail } from "./detail.mjs";
 
   els.horizon.addEventListener("input", function () {
     prefs.horizonDays = Number(els.horizon.value);
-    els.horizonOut.textContent = prefs.horizonDays + " days";
     applyWeights();
   });
 
