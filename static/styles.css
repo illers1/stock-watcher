@@ -280,10 +280,13 @@ td.score { width: 62px; }
   background: var(--panel); border: 1px solid var(--border);
   border-radius: var(--radius); margin-bottom: 18px; box-shadow: var(--shadow);
 }
+/* The ::before marker is itself a flex item, so space-between would strand the
+   label in the middle of the bar. Group marker + label left, push the hint right. */
 .weights > summary {
-  cursor: pointer; padding: 12px 16px; display: flex; gap: 12px;
-  align-items: baseline; justify-content: space-between; font-size: 13.5px;
+  cursor: pointer; padding: 12px 16px; display: flex; gap: 8px;
+  align-items: baseline; font-size: 13.5px;
 }
+.weights > summary > span:first-of-type { margin-right: auto; }
 .weights > summary::-webkit-details-marker { display: none; }
 .weights > summary::before {
   content: "▸"; color: var(--muted); margin-right: 2px; transition: transform .15s;
@@ -300,12 +303,21 @@ td.score { width: 62px; }
 .preset:hover { border-color: var(--muted); }
 .preset.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .horizon { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
-.horizon input[type="range"] { flex: 1; max-width: 260px; accent-color: var(--accent); }
+.horizon input[type="range"] { flex: 1; min-width: 0; max-width: 260px; accent-color: var(--accent); }
 .horizon output { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
-.sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px 20px; }
-.slider { display: grid; grid-template-columns: 90px 1fr 26px; align-items: center; gap: 10px; font-size: 12.5px; }
-.slider input[type="range"] { accent-color: var(--accent); }
-.slider output { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px 26px; }
+/* minmax(0, 1fr) rather than 1fr: a range input reports an intrinsic width of
+   ~129px, and a plain 1fr track refuses to shrink under it, so the value
+   overflowed into the next column. */
+.slider {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) 30px;
+  align-items: center; gap: 10px; font-size: 12.5px; min-width: 0;
+}
+.slider input[type="range"] { accent-color: var(--accent); width: 100%; min-width: 0; }
+.slider output {
+  text-align: right; font-variant-numeric: tabular-nums;
+  color: var(--text); font-weight: 600;
+}
 .sl-name { color: var(--muted); }
 .section-hint { color: var(--muted); font-size: 12px; margin: 12px 0 0; }
 
@@ -426,6 +438,8 @@ ul.news a:hover { color: var(--accent); text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) { .dp-loading span { animation: none; } }
 
 @media (max-width: 620px) {
+  .weights-hint { display: none; }
+  .sliders { grid-template-columns: 1fr; }
   .quotes td.score { position: absolute; right: 34px; top: 50%; transform: translateY(-50%); width: auto; }
   .quotes tr { padding-right: 78px; }
   .detail-panel { width: 100%; padding: 0 16px 40px; }
