@@ -90,9 +90,17 @@ symbols you picked; this starts from the calendar.
   month. Weekends are skipped, and a company that appears twice is held at the
   earliest date it is listed for.
 - **Filters** — session (before the open, after the close, time not announced),
-  minimum market capitalisation, and a free-text filter over symbol and name.
-  The default floor of $2B is deliberate: a typical day is dominated by
-  companies too small to carry a consensus estimate at all.
+  minimum market capitalisation ($25M through $50B), minimum share price ($1
+  through $20), and a free-text filter over symbol and name. The default cap
+  floor of $2B is deliberate: a typical day is dominated by companies too small
+  to carry a consensus estimate at all. Dropping to $25M roughly triples the
+  list, which is what the price floor is for.
+
+  Size, session and text come off the calendar row, so they apply the instant
+  the calendar lands. Price cannot: it comes from the quote feed, which is
+  fetched for whatever the other filters leave. A company is therefore held
+  back until its price is known to clear the floor — never shown on trust — and
+  a line under the filters says how many are hidden and why.
 - **Columns** — the day and session, live price and change, market cap, the
   consensus EPS estimate with the number of analysts behind it, and the
   expected move against the same quarter last year. Growth off a prior-year

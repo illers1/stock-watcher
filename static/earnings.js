@@ -24,15 +24,15 @@ import { renderDetail } from "./detail.mjs";
   var ANALYSIS_TTL_MS = 30 * 60 * 1000;
   var ANALYSIS_CONCURRENCY = 3;
   var RATE_BATCH = 12;          // how many rows a rating pass covers
-  var QUOTE_LIMIT = 200;        // symbols worth a live price on one screen
+  var QUOTE_LIMIT = 400;        // symbols worth a live price on one screen
   var QUOTE_CHUNK = 50;         // the quote feed takes the whole set at once
 
   var els = {};
   ["rows", "empty", "status", "banner", "refresh", "summary", "sum-count", "sum-bmo",
    "sum-amc", "sum-rated", "cal", "table-wrap", "weights", "presets", "sliders",
    "preset-name", "horizon", "horizon-out", "detail-panel", "dp-backdrop",
-   "window", "session", "mincap", "query", "filters", "rate-more", "rate-btn",
-   "rate-note"].forEach(function (id) {
+   "window", "session", "mincap", "minprice", "query", "filters", "rate-more",
+   "rate-btn", "rate-note", "filter-note"].forEach(function (id) {
     els[id.replace(/-(\w)/g, function (m, c) { return c.toUpperCase(); })] =
       document.getElementById(id);
   });
@@ -45,12 +45,14 @@ import { renderDetail } from "./detail.mjs";
   if (!prefs.preset) prefs.preset = "sprint";
 
   var filters = load(EARN_KEY, {
-    days: 5, session: "", minCap: 2e9, query: "", sortKey: "date", sortDir: 1,
+    days: 5, session: "", minCap: 2e9, minPrice: 0, query: "",
+    sortKey: "date", sortDir: 1,
   });
 
   var watchlist = load(STORE_KEY, []);
   var all = [];          // every row the calendar returned, parsed
-  var visible = [];      // what the filters leave, in sort order
+  var pool = [];         // passes the calendar-only filters; what quotes are fetched for
+  var visible = [];      // pool minus the price floor, in sort order
   var quotes = {};       // symbol -> live quote
   var analyses = seedAnalyses();   // symbol -> {at, model, failed}
   var scores = {};       // symbol -> scored result
@@ -135,9 +137,16 @@ import { renderDetail } from "./detail.mjs";
 
   /* ---------------- filtering and sorting ---------------- */
 
+  /* Filtering happens in two stages, because the two kinds of criterion come
+     from different places. Session, size and the text box are answered by the
+     calendar row itself, so they apply the moment the calendar lands. A price
+     floor cannot be: the price comes from /api/quotes, which is fetched for
+     the pool the first stage leaves. So the pool is what gets quoted, and the
+     floor is applied on top of it as those quotes arrive. */
+
   function applyFilters() {
     var q = String(filters.query || "").trim().toLowerCase();
-    var rows = all.filter(function (r) {
+    pool = all.filter(function (r) {
       if (filters.session && r.session.key !== filters.session) return false;
       // A row with no market cap at all is filtered out with the small caps:
       // Nasdaq omits it for shells and freshly listed names, and keeping them
@@ -147,7 +156,17 @@ import { renderDetail } from "./detail.mjs";
           String(r.name).toLowerCase().indexOf(q) === -1) return false;
       return true;
     });
-    visible = sortRows(rows);
+
+    // An unverified price is not a passing one: a row whose quote has not
+    // arrived, or came back empty, is held out rather than shown on trust.
+    visible = sortRows(filters.minPrice > 0
+      ? pool.filter(function (r) { return priceOf(r.symbol) >= filters.minPrice; })
+      : pool);
+  }
+
+  function priceOf(sym) {
+    var q = quotes[sym];
+    return q && !q.error && q.price !== null && q.price !== undefined ? q.price : null;
   }
 
   function valueOf(row, key) {
@@ -247,6 +266,23 @@ import { renderDetail } from "./detail.mjs";
     renderSummary();
     renderSortIndicator();
     renderRateButton();
+    renderFilterNote();
+  }
+
+  /* A price floor removes rows for a reason that is not on screen — no quote
+     yet, no quote at all, or a price below the line. Say which, rather than
+     letting companies quietly go missing. */
+  function renderFilterNote() {
+    if (!filters.minPrice || !pool.length) { els.filterNote.hidden = true; return; }
+    var waiting = pool.filter(function (r) { return priceOf(r.symbol) === null; }).length;
+    var capped = Math.max(0, pool.length - QUOTE_LIMIT);
+    els.filterNote.hidden = false;
+    els.filterNote.textContent =
+      "Price floor $" + filters.minPrice + " — " + visible.length + " of " + pool.length +
+      " companies in the window trade at or above it." +
+      (waiting ? " " + waiting + " hidden while a price is still unknown." : "") +
+      (capped ? " " + capped + " beyond the " + QUOTE_LIMIT +
+        "-symbol quote limit are never priced; narrow the window to reach them." : "");
   }
 
   function renderSummary() {
@@ -333,9 +369,14 @@ import { renderDetail } from "./detail.mjs";
       });
   }
 
-  /** Live prices for what is on screen, in chunks the quote feed accepts. */
+  /** Live prices for the pool, in chunks the quote feed accepts. Largest
+      companies first, so that if the cap bites it takes the least-watched
+      names — and so a price floor has the rows that matter to judge. */
   function fetchQuotes() {
-    var wanted = visible.slice(0, QUOTE_LIMIT).map(function (r) { return r.symbol; })
+    var wanted = pool.slice()
+      .sort(function (a, b) { return (b.marketCap || 0) - (a.marketCap || 0); })
+      .slice(0, QUOTE_LIMIT)
+      .map(function (r) { return r.symbol; })
       .filter(function (s) { return !quotes[s]; });
     if (!wanted.length) return Promise.resolve();
 
@@ -524,14 +565,15 @@ import { renderDetail } from "./detail.mjs";
     loadCalendar();
   });
 
-  ["session", "mincap"].forEach(function (id) {
+  ["session", "mincap", "minprice"].forEach(function (id) {
     els[id].addEventListener("change", function () {
       filters.session = els.session.value;
       filters.minCap = Number(els.mincap.value);
+      filters.minPrice = Number(els.minprice.value);
       save(EARN_KEY, filters);
       applyFilters();
       render();
-      fetchQuotes();
+      fetchQuotes().then(rateBatch);
     });
   });
 
@@ -618,6 +660,7 @@ import { renderDetail } from "./detail.mjs";
   els.window.value = String(filters.days);
   els.session.value = filters.session || "";
   els.mincap.value = String(filters.minCap);
+  els.minprice.value = String(filters.minPrice || 0);
   els.query.value = filters.query || "";
   renderWeightControls();
   render();
