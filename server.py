@@ -309,15 +309,26 @@ def fetch_analysis(symbol):
         return dict(pool.map(fetch_source, urls.items()))
 
 
-def fetch_calendar(days):
-    """Walk the earnings calendar forward and index it by symbol."""
-    today = datetime.date.today()
-    dates = []
-    for n in range(days):
+CALENDAR_FIELDS = ("time", "marketCap", "epsForecast", "noOfEsts",
+                   "fiscalQuarterEnding", "lastYearEPS", "lastYearRptDt")
+MAX_EARNINGS_ROWS = 2500
+
+
+def trading_days(days, start=None):
+    """The next `days` weekdays, as ISO dates. Mirrors netlify/lib/calendar.mjs."""
+    today = start or datetime.date.today()
+    out = []
+    n = 0
+    while len(out) < days:
         d = today + datetime.timedelta(days=n)
         if d.weekday() < 5:
-            dates.append(d.isoformat())
+            out.append(d.isoformat())
+        n += 1
+    return out
 
+
+def calendar_pages(dates):
+    """One request per day, in order. A failed day is an empty day."""
     def one(date_str):
         try:
             data = raw_json("%s?date=%s" % (CALENDAR_URL, date_str), timeout=8)
@@ -325,20 +336,57 @@ def fetch_calendar(days):
         except Exception:
             return date_str, []
 
-    events = {}
     with ThreadPoolExecutor(max_workers=6) as pool:
-        for date_str, rows in sorted(pool.map(one, dates)):
-            for row in rows:
-                sym = str(row.get("symbol") or "").upper()
-                if not sym or sym in events:
-                    continue  # keep the soonest date per symbol
-                events[sym] = {
-                    "date": date_str,
-                    "time": row.get("time"),
-                    "epsForecast": row.get("epsForecast"),
-                    "fiscalQuarterEnding": row.get("fiscalQuarterEnding"),
-                    "name": row.get("name"),
-                }
+        return sorted(pool.map(one, dates))
+
+
+def fetch_earnings(days):
+    """The calendar kept day by day, for the Earnings window."""
+    dates = trading_days(days)
+    seen = set()
+    out = []
+    total = 0
+    truncated = False
+
+    for date_str, rows in calendar_pages(dates):
+        kept = []
+        for row in rows:
+            sym = str(row.get("symbol") or "").upper()
+            # The first sighting wins: a confirmed date beats a later provisional one.
+            if not sym or sym in seen:
+                continue
+            if total >= MAX_EARNINGS_ROWS:
+                truncated = True
+                break
+            seen.add(sym)
+            entry = {"symbol": sym, "name": row.get("name"), "date": date_str}
+            entry.update({k: row.get(k) for k in CALENDAR_FIELDS})
+            kept.append(entry)
+            total += 1
+        out.append({"date": date_str, "count": len(kept), "rows": kept})
+
+    return {
+        "days": out, "total": total, "truncated": truncated,
+        "from": dates[0] if dates else None, "to": dates[-1] if dates else None,
+    }
+
+
+def fetch_calendar(days):
+    """Walk the earnings calendar forward and index it by symbol."""
+    dates = trading_days(days)
+    events = {}
+    for date_str, rows in calendar_pages(dates):
+        for row in rows:
+            sym = str(row.get("symbol") or "").upper()
+            if not sym or sym in events:
+                continue  # keep the soonest date per symbol
+            events[sym] = {
+                "date": date_str,
+                "time": row.get("time"),
+                "epsForecast": row.get("epsForecast"),
+                "fiscalQuarterEnding": row.get("fiscalQuarterEnding"),
+                "name": row.get("name"),
+            }
     return {
         "events": events, "daysScanned": len(dates),
         "from": dates[0] if dates else None, "to": dates[-1] if dates else None,
@@ -352,6 +400,14 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         if VERBOSE[0]:
             super().log_message(fmt, *args)
+
+    def end_headers(self):
+        # A plain static handler sends no cache headers at all, so browsers
+        # apply heuristic caching and quietly keep serving the script you just
+        # edited. Locally that is never what anyone wants.
+        if not self.path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-store")
+        super().end_headers()
 
     def send_json(self, payload, status=200):
         body = json.dumps(payload).encode("utf-8")
@@ -404,6 +460,16 @@ class Handler(SimpleHTTPRequestHandler):
                 days = 30
             days = max(1, min(60, days))
             result = fetch_calendar(days)
+            result.update({"asOf": time.time(), "error": None})
+            return self.send_json(result)
+
+        if parsed.path == "/api/earnings":
+            try:
+                days = int((params.get("days") or ["5"])[0])
+            except ValueError:
+                days = 5
+            days = max(1, min(30, days))
+            result = fetch_earnings(days)
             result.update({"asOf": time.time(), "error": None})
             return self.send_json(result)
 

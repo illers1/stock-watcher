@@ -1,13 +1,18 @@
 # Stock Watcher
 
-A web app for watching a cumulative list of stocks: live price, dollar change
-and percentage change, colour-coded green for up and red for down. Each visitor
-keeps their own watchlist in their own browser.
+A web app for watching stocks, in two windows that share one rating engine:
 
-Runs two ways from the same front end — as a public website on Netlify, or
-locally from a single Python file.
+- **Watchlist** — a cumulative list you choose: live price, dollar change and
+  percentage change, colour-coded green for up and red for down.
+- **Earnings** — everyone reporting inside a window you choose, taken from
+  Nasdaq's earnings calendar and put through the same analysis, so a week of
+  scheduled reports can be ranked rather than merely listed.
 
-## Using it
+Each visitor keeps their own watchlist in their own browser. Runs two ways from
+the same front end — as a public website on Netlify, or locally from a single
+Python file.
+
+## The watchlist window
 
 - **Add** — type a ticker or company name in the box. A suggestion list appears;
   pick one with the mouse or the arrow keys, or type the symbol and press Enter.
@@ -76,6 +81,36 @@ A one-month horizon is mostly noise. This ranks stocks on stated, visible
 factors; it does not predict returns, and no weighting makes a short holding
 period more predictable than it is. It is a research tool, not advice.
 
+## The earnings window
+
+`earnings.html`, linked from the tabs in the header. The watchlist starts from
+symbols you picked; this starts from the calendar.
+
+- **Window** — today, today and tomorrow, the trading week, a fortnight or a
+  month. Weekends are skipped, and a company that appears twice is held at the
+  earliest date it is listed for.
+- **Filters** — session (before the open, after the close, time not announced),
+  minimum market capitalisation, and a free-text filter over symbol and name.
+  The default floor of $2B is deliberate: a typical day is dominated by
+  companies too small to carry a consensus estimate at all.
+- **Columns** — the day and session, live price and change, market cap, the
+  consensus EPS estimate with the number of analysts behind it, and the
+  expected move against the same quarter last year. Growth off a prior-year
+  loss is shown as blank rather than as an enormous percentage.
+- **Rating** — the same 0-100 score, the same seven factors, the same sliders.
+  Weights and horizon are shared with the watchlist window through the same
+  browser storage, so changing them in one changes both.
+- **Ranking** — the analysis panel ranks a company against the others rated in
+  the window, which is the comparison the page exists to make.
+- **`+`** adds a company to your watchlist without leaving the page.
+
+Scoring is not free: each company is a full analysis fan-out, so rows are rated
+a batch at a time — the first twelve automatically, then more on request. The
+count of what is rated so far is in the header stats.
+
+A scheduled report is a known risk, not a known direction. A high rating going
+into earnings says the visible factors line up, not that the print will be good.
+
 ## Deploying it as a website
 
 The repository is ready to deploy — there is no build step and no dependencies
@@ -106,16 +141,21 @@ Python 3.7+ and nothing else. Options: `--port 9000`, `--no-open`,
 ## How it works
 
 - `static/` — the whole front end, no build step and no frameworks.
-  `app.js` drives the page; `analyze.mjs` turns raw upstream payloads into one
-  model; `score.mjs` holds the rating (pure functions, no DOM); `detail.mjs`
-  renders the analysis panel.
-- `netlify/functions/quotes.mjs`, `search.mjs` — the deployed API, as
-  serverless functions routed to `/api/quotes` and `/api/search` by their own
-  `config.path` exports.
+  `app.js` drives the watchlist and `earnings.js` the earnings window;
+  `analyze.mjs` turns raw upstream payloads into one model and
+  `earnings-model.mjs` does the same for calendar rows; `score.mjs` holds the
+  rating (pure functions, no DOM); `detail.mjs` renders the analysis panel for
+  both windows.
+- `netlify/functions/quotes.mjs`, `search.mjs`, `analysis.mjs`, `calendar.mjs`,
+  `earnings.mjs` — the deployed API, as serverless functions routed to
+  `/api/quotes`, `/api/search` and so on by their own `config.path` exports.
+- `netlify/lib/calendar.mjs` — the walk over Nasdaq's date-indexed calendar,
+  shared by `/api/calendar` (which collapses it to one date per symbol) and
+  `/api/earnings` (which keeps the day-by-day listing).
 - `netlify/lib/format.mjs` — the quote parsing, kept separate from the
   functions so it stays testable on its own.
-- `tests/` — 121 assertions over the parsing, the API handlers, the analysis
-  model and the scoring engine, run in a
+- `tests/` — 184 assertions over the parsing, the API handlers, the analysis
+  model, the earnings calendar and the scoring engine, run in a
   browser with no test runner to install. Serve the repository root and open
   `/tests/`:
 
@@ -140,8 +180,8 @@ Quotes come from CNBC's public feed, which returns the whole watchlist in a
 single request no matter how many symbols are on it. The analysis draws on
 Nasdaq's public API for fundamentals, analyst coverage, earnings, insider
 filings, short interest, news and price history. The earnings calendar is
-indexed by date upstream, so `/api/calendar` walks the window once and every
-symbol resolves from that one map. On Netlify the responses
+indexed by date upstream, so both calendar endpoints walk the window once: a
+day that fails is an empty day rather than a failed window. On Netlify the responses
 are cached at the CDN for 15 seconds, so the upstream sees one call per distinct
 watchlist per 15s regardless of how many people have the page open.
 

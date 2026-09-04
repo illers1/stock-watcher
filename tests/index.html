@@ -19,6 +19,11 @@ const { toFloat, toBig, parseSymbols, buildQuotes } = await import("../netlify/l
 const { default: quotesFn, config: quotesCfg } = await import("../netlify/functions/quotes.mjs" + v);
 const { default: searchFn, config: searchCfg } = await import("../netlify/functions/search.mjs" + v);
 const { parseAnalysis, classifyInsiderTrade } = await import("../static/analyze.mjs" + v);
+const { default: earningsFn, config: earningsCfg, buildEarnings } =
+  await import("../netlify/functions/earnings.mjs" + v);
+const { tradingDays } = await import("../netlify/lib/calendar.mjs" + v);
+const { money, session, daysAway, parseRow, parseEarnings, summarise } =
+  await import("../static/earnings-model.mjs" + v);
 const { band, scoreAnalysis, scoreBand, PRESETS, FACTORS } = await import("../static/score.mjs" + v);
 
 const results = [];
@@ -257,6 +262,126 @@ eq("an empty analysis has zero confidence", empty.confidence, 0);
 eq("scoreBand strong", scoreBand(80).label, "Strong");
 eq("scoreBand poor", scoreBand(10).label, "Poor");
 eq("scoreBand null", scoreBand(null).label, "No data");
+
+/* ============ earnings calendar: window, model and endpoint ============ */
+const cal = await (await fetch("./calendar-fixture.json")).json();
+
+/* -- the trading-day walk -- */
+eq("tradingDays skips the weekend",
+   tradingDays("2026-09-03", 4), ["2026-09-03", "2026-09-04", "2026-09-07", "2026-09-08"]);
+eq("tradingDays starting on a Saturday moves to Monday",
+   tradingDays("2026-09-05", 1), ["2026-09-07"]);
+eq("tradingDays respects the cap", tradingDays("2026-09-03", 40, 3).length, 3);
+/* toISOString() would convert to UTC and hand back the day before for anyone
+   east of Greenwich; the walk must return the date it was asked for. */
+eq("tradingDays does not shift the date across timezones",
+   tradingDays(new Date(2026, 8, 3, 0, 30), 1), ["2026-09-03"]);
+
+/* -- Nasdaq's money formatting -- */
+eq("money plain", money("$1.46"), 1.46);
+eq("money brackets are a loss", money("($0.04)"), -0.04);
+eq("money big with commas", money("$50,132,382,000"), 50132382000);
+eq("money bare number", money("11"), 11);
+eq("money empty", money(""), null);
+eq("money N/A", money("N/A"), null);
+eq("money null", money(null), null);
+eq("money leading minus", money("-$0.26"), -0.26);
+eq("money garbage", money("soon"), null);
+
+eq("session pre-market", session("time-pre-market").short, "BMO");
+eq("session after-hours", session("time-after-hours").short, "AMC");
+eq("session unknown falls back to TBA", session("").short, "TBA");
+eq("session missing falls back to TBA", session(null).key, "tba");
+
+eq("daysAway today", daysAway("2026-09-03", new Date(2026, 8, 3, 23, 0)), 0);
+eq("daysAway tomorrow", daysAway("2026-09-04", new Date(2026, 8, 3)), 1);
+eq("daysAway past is negative", daysAway("2026-09-01", new Date(2026, 8, 3)), -2);
+eq("daysAway junk", daysAway("not a date"), null);
+
+/* -- one row -- */
+const lulu = parseRow({ ...cal.day1.data.rows[2], date: "2026-09-03" }, new Date(2026, 8, 3));
+eq("row symbol", lulu.symbol, "LULU");
+eq("row market cap", lulu.marketCap, 13020145700);
+eq("row consensus", lulu.epsForecast, 1.79);
+eq("row estimate count", lulu.estimates, 12);
+eq("row session", lulu.session.key, "amc");
+check("row EPS growth is negative for a shrinking quarter",
+      lulu.epsGrowth < 0, String(lulu.epsGrowth));
+eq("row hands parseAnalysis a usable event", lulu.event.date, "2026-09-03");
+
+/* A prior-year loss makes year-on-year growth meaningless, not enormous. */
+const zs = parseRow({ ...cal.day1.data.rows[1], date: "2026-09-03" });
+eq("last year's loss parsed as negative", zs.lastYearEPS, -0.04);
+eq("growth off a negative base is dropped, not inflated", zs.epsGrowth, null);
+
+const blank = parseRow({ ...cal.day1.data.rows[5], date: "2026-09-03" });
+eq("blank row still yields a symbol", blank.symbol, "ZZT");
+eq("blank market cap is null", blank.marketCap, null);
+eq("blank consensus is null", blank.epsForecast, null);
+eq("blank estimate count is null", blank.estimates, null);
+
+/* -- the endpoint -- */
+eq("earnings route", earningsCfg.path, "/api/earnings");
+
+const calStub = (url) => {
+  const date = new URL(String(url)).searchParams.get("date");
+  return ok(date === "2026-09-03" ? cal.day1 : date === "2026-09-04" ? cal.day2 : cal.empty);
+};
+
+let calBody = await withStub(calStub, () => buildEarnings("2026-09-03", 3));
+eq("one request per trading day", calls.length, 3);
+eq("days come back in order", calBody.days.map(d => d.date),
+   ["2026-09-03", "2026-09-04", "2026-09-07"]);
+eq("day one keeps every row", calBody.days[0].rows.length, 6);
+eq("a symbol already seen is not repeated on a later day",
+   calBody.days[1].rows.map(r => r.symbol), ["ORCL"]);
+eq("total counts what was kept", calBody.total, 7);
+eq("an empty day is still a day", calBody.days[2].rows, []);
+eq("window start", calBody.from, "2026-09-03");
+eq("rows carry their own date", calBody.days[0].rows[0].date, "2026-09-03");
+eq("upstream formatting is passed through untouched",
+   calBody.days[0].rows[0].epsForecast, "$1.46");
+eq("lowercase symbols are normalised", calBody.days[0].rows[5].symbol, "ZZT");
+
+res = await withStub(calStub, () => earningsFn(req("/api/earnings?from=2026-09-03&days=2")));
+body = await res.json();
+eq("earnings status", res.status, 200);
+eq("earnings no error", body.error, null);
+check("earnings sets a CDN cache header",
+  /max-age=21600/.test(res.headers.get("Netlify-CDN-Cache-Control") ?? ""),
+  res.headers.get("Netlify-CDN-Cache-Control"));
+eq("earnings honours the from date", body.from, "2026-09-03");
+eq("earnings honours the day count", body.days.length, 2);
+
+res = await withStub(calStub, () => earningsFn(req("/api/earnings?from=nonsense&days=999")));
+body = await res.json();
+eq("a junk from date falls back to today, not an error", body.error, null);
+check("an oversized window is capped", body.days.length <= 30, String(body.days.length));
+
+/* A day the upstream refuses must not take the window down with it. */
+res = await withStub((url) => new URL(String(url)).searchParams.get("date") === "2026-09-03"
+      ? new Response("nope", { status: 500 }) : calStub(url),
+  () => earningsFn(req("/api/earnings?from=2026-09-03&days=2")));
+body = await res.json();
+eq("a failed day is empty, not fatal", body.days[0].rows, []);
+eq("the rest of the window survives", body.days[1].rows.map(r => r.symbol), ["ZS", "ORCL"]);
+
+res = await withStub(() => { throw new TypeError("offline"); },
+  () => earningsFn(req("/api/earnings?from=2026-09-03&days=2")));
+body = await res.json();
+eq("a total network failure still returns 200", res.status, 200);
+eq("a total network failure yields empty days", body.total, 0);
+
+/* -- the page model over the endpoint's shape -- */
+const model2 = parseEarnings(calBody, new Date(2026, 8, 3));
+eq("flattening keeps every row", model2.length, 7);
+eq("flattening preserves date order", model2[model2.length - 1].symbol, "ORCL");
+eq("flattened rows carry the day's date", model2[6].date, "2026-09-04");
+const sum = summarise(model2);
+eq("summary counts", sum.count, 7);
+eq("summary counts the pre-market names", sum.bmo, 2);
+eq("summary counts the after-hours names", sum.amc, 2);
+eq("summary counts the $10B-and-up names", sum.largeCaps, 4);
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

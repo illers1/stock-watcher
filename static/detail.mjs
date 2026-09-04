@@ -263,7 +263,7 @@ export function renderDetail(a, scored, prefs, rank) {
         <p>Weighted for <em>${esc(PRESETS[prefs.preset]?.label ?? "custom weights")}</em>
            over a ${scored.horizonDays}-day horizon.</p>
         ${rank && rank.total > 1
-          ? `<p class="rank">Ranked <strong>#${rank.position}</strong> of ${rank.total} on your watchlist</p>`
+          ? `<p class="rank">Ranked <strong>#${rank.position}</strong> of ${rank.total} ${esc(rank.of ?? "on your watchlist")}</p>`
           : ""}
         <p class="confidence">Confidence ${Math.round(scored.confidence * 100)}%${
           failed.length ? ` — ${esc(failed.join(", "))} unavailable` : ""}</p>

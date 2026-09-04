@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Earnings Radar — Stock Watcher</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🗓️</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>Stock Watcher</h1>
+    <nav class="tabs" aria-label="Views">
+      <a href="index.html">Watchlist</a>
+      <a href="earnings.html" aria-current="page">Earnings</a>
+    </nav>
+  </div>
+  <div class="topbar-right">
+    <span id="status" class="status" role="status" aria-live="polite">Loading…</span>
+    <button id="refresh" class="btn" title="Reload the calendar (press R)">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <p class="lede">
+    Every US company reporting inside the window, straight from Nasdaq's calendar —
+    then the same 0&ndash;100 rating as the watchlist, so a week of earnings can be
+    ranked rather than just listed.
+  </p>
+
+  <form class="filters" id="filters" autocomplete="off">
+    <label class="sel">
+      <span>Window</span>
+      <select id="window">
+        <option value="1">Today</option>
+        <option value="2">Today + tomorrow</option>
+        <option value="5" selected>This trading week</option>
+        <option value="10">Next 2 weeks</option>
+        <option value="21">Next month</option>
+      </select>
+    </label>
+    <label class="sel">
+      <span>Session</span>
+      <select id="session">
+        <option value="">Any</option>
+        <option value="bmo">Before the open</option>
+        <option value="amc">After the close</option>
+        <option value="tba">Time not announced</option>
+      </select>
+    </label>
+    <label class="sel">
+      <span>Minimum size</span>
+      <select id="mincap">
+        <option value="0">Any</option>
+        <option value="300000000">$300M+</option>
+        <option value="2000000000" selected>$2B+</option>
+        <option value="10000000000">$10B+</option>
+        <option value="50000000000">$50B+</option>
+      </select>
+    </label>
+    <label class="sel grow">
+      <span>Filter</span>
+      <input id="query" type="search" placeholder="Symbol or company name" spellcheck="false">
+    </label>
+  </form>
+
+  <p id="banner" class="banner" hidden></p>
+
+  <section id="summary" class="summary" hidden>
+    <div class="stat"><span class="stat-label">Reporting</span><span id="sum-count" class="stat-value">0</span></div>
+    <div class="stat"><span class="stat-label">Before open</span><span id="sum-bmo" class="stat-value">0</span></div>
+    <div class="stat"><span class="stat-label">After close</span><span id="sum-amc" class="stat-value">0</span></div>
+    <div class="stat"><span class="stat-label">Rated</span><span id="sum-rated" class="stat-value">0</span></div>
+  </section>
+
+  <details class="weights" id="weights">
+    <summary>
+      <span>Rating method: <strong id="preset-name">1-Month Sprint</strong></span>
+      <span class="weights-hint">how the 0&ndash;100 score is weighted</span>
+    </summary>
+    <div class="weights-body">
+      <div class="preset-row" id="presets"></div>
+      <label class="horizon">
+        Competition horizon
+        <input type="range" id="horizon" min="7" max="90" step="1" value="30">
+        <output id="horizon-out">30 days</output>
+      </label>
+      <div class="sliders" id="sliders"></div>
+      <p class="section-hint">Shared with the watchlist window — change it here and both agree.
+        Weights re-score instantly; nothing is refetched.</p>
+    </div>
+  </details>
+
+  <div class="table-wrap" id="table-wrap">
+    <table class="quotes earnings" id="cal">
+      <thead>
+        <tr>
+          <th class="col-sym"  data-sort="symbol">Company</th>
+          <th class="col-when" data-sort="date">When</th>
+          <th class="col-num"  data-sort="price">Price</th>
+          <th class="col-num"  data-sort="changePercent">% Change</th>
+          <th class="col-num col-hide" data-sort="marketCap">Mkt cap</th>
+          <th class="col-num col-hide" data-sort="epsForecast">Cons. EPS</th>
+          <th class="col-num col-hide" data-sort="epsGrowth">vs last yr</th>
+          <th class="col-num col-score" data-sort="score">Rating</th>
+          <th class="col-act"><span class="sr-only">Add to watchlist</span></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <div class="rate-more" id="rate-more" hidden>
+    <button type="button" class="btn" id="rate-btn">Rate the next 12</button>
+    <span class="muted" id="rate-note"></span>
+  </div>
+
+  <p id="empty" class="empty" hidden>
+    Nothing matches these filters. Widen the window, or lower the minimum size —
+    most days are dominated by companies too small to carry a consensus estimate.
+  </p>
+</main>
+
+<div class="dp-backdrop" id="dp-backdrop" hidden></div>
+<aside class="detail-panel" id="detail-panel" hidden aria-label="Stock analysis"></aside>
+
+<footer class="foot">
+  <span>Calendar and fundamentals via Nasdaq's public API; prices via CNBC and may be
+    delayed. A scheduled report is a known risk, not a known direction — information
+    only, not investment advice.</span>
+  <a class="footlink" href="index.html">Back to the watchlist</a>
+</footer>
+
+<script type="module" src="earnings.js"></script>
+</body>
+</html>

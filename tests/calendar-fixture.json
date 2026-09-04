@@ -1,0 +1,108 @@
+{
+ "_comment": "Trimmed capture of api.nasdaq.com/api/calendar/earnings?date=2026-09-03, plus one hand-made row for the empty-field shapes.",
+ "day1": {
+  "data": {
+   "rows": [
+    {
+     "lastYearRptDt": "9/04/2025",
+     "lastYearEPS": "$0.41",
+     "time": "time-pre-market",
+     "symbol": "CIEN",
+     "name": "Ciena Corporation",
+     "marketCap": "$50,132,382,000",
+     "fiscalQuarterEnding": "Jul/2026",
+     "epsForecast": "$1.46",
+     "noOfEsts": "8"
+    },
+    {
+     "lastYearRptDt": "9/02/2025",
+     "lastYearEPS": "($0.04)",
+     "time": "time-after-hours",
+     "symbol": "ZS",
+     "name": "Zscaler, Inc.",
+     "marketCap": "$27,932,086,300",
+     "fiscalQuarterEnding": "Jul/2026",
+     "epsForecast": "$0.06",
+     "noOfEsts": "11"
+    },
+    {
+     "lastYearRptDt": "9/04/2025",
+     "lastYearEPS": "$3.10",
+     "time": "time-after-hours",
+     "symbol": "LULU",
+     "name": "lululemon athletica inc.",
+     "marketCap": "$13,020,145,700",
+     "fiscalQuarterEnding": "Jul/2026",
+     "epsForecast": "$1.79",
+     "noOfEsts": "12"
+    },
+    {
+     "lastYearRptDt": "9/04/2025",
+     "lastYearEPS": "($0.35)",
+     "time": "time-not-supplied",
+     "symbol": "VFS",
+     "name": "VinFast Auto Ltd.",
+     "marketCap": "$7,275,956,700",
+     "fiscalQuarterEnding": "Jun/2026",
+     "epsForecast": "($0.26)",
+     "noOfEsts": "1"
+    },
+    {
+     "lastYearRptDt": "8/14/2025",
+     "lastYearEPS": "$0.17",
+     "time": "time-not-supplied",
+     "symbol": "SNYR",
+     "name": "Synergy CHC Corp.",
+     "marketCap": "$1,668,787",
+     "fiscalQuarterEnding": "Jun/2026",
+     "epsForecast": "($0.01)",
+     "noOfEsts": "1"
+    },
+    {
+     "lastYearRptDt": "",
+     "lastYearEPS": "N/A",
+     "time": "",
+     "symbol": "zzt",
+     "name": "Placeholder Holdings Ltd.",
+     "marketCap": "",
+     "fiscalQuarterEnding": "Jun/2026",
+     "epsForecast": "",
+     "noOfEsts": ""
+    }
+   ]
+  }
+ },
+ "day2": {
+  "data": {
+   "rows": [
+    {
+     "lastYearRptDt": "9/02/2025",
+     "lastYearEPS": "($0.04)",
+     "time": "time-after-hours",
+     "symbol": "ZS",
+     "name": "Zscaler, Inc.",
+     "marketCap": "$27,932,086,300",
+     "fiscalQuarterEnding": "Jul/2026",
+     "epsForecast": "$0.06",
+     "noOfEsts": "11"
+    },
+    {
+     "lastYearRptDt": "9/09/2025",
+     "lastYearEPS": "$1.00",
+     "time": "time-pre-market",
+     "symbol": "ORCL",
+     "name": "Oracle Corporation",
+     "marketCap": "$640,000,000,000",
+     "fiscalQuarterEnding": "Aug/2026",
+     "epsForecast": "$1.32",
+     "noOfEsts": "14"
+    }
+   ]
+  }
+ },
+ "empty": {
+  "data": {
+   "rows": []
+  }
+ }
+}
