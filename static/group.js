@@ -56,6 +56,8 @@ import { renderDetail } from "./detail.mjs";
   var myName = loadName();
   var quoteTimer = null;
   var pollTimer = null;
+  var syncedAt = null;      // when the list was last confirmed against the server
+  var pollFailures = 0;
 
   function load(key, fallback) {
     try {
@@ -144,6 +146,8 @@ import { renderDetail } from "./detail.mjs";
     return api({ action: "get", code: next })
       .then(function (data) {
         adopt(data);
+        syncedAt = Date.now();
+        pollFailures = 0;
         save(LAST_GROUP_KEY, { code: code });
         if (location.hash.slice(1) !== code) location.hash = code;
         showRoom();
@@ -180,6 +184,8 @@ import { renderDetail } from "./detail.mjs";
     return api({ action: action, code: code, symbol: symbol, by: myName })
       .then(function (data) {
         adopt(data);
+        syncedAt = Date.now();
+        pollFailures = 0;
         render();
         setBanner("");
         setStatus(symbol + (action === "add" ? " added" : " removed") + " for everyone");
@@ -194,17 +200,39 @@ import { renderDetail } from "./detail.mjs";
   }
 
   /* Somebody else may have changed the list. Only re-render when the revision
-     actually moved, so a poll costs nothing visible. */
+     actually moved, so a quiet poll costs nothing visible.
+
+     A poll that FAILS, though, must not be quiet. Silently swallowing these is
+     how a list goes stale for a quarter of an hour and looks perfectly healthy
+     the whole time: the page shows what it last knew and gives no hint that it
+     stopped hearing from anyone. One miss is noise; a run of them is worth
+     saying out loud. */
   function poll() {
     if (!code || document.hidden) return Promise.resolve();
     return api({ action: "get", code: code })
       .then(function (data) {
-        if (!adopt(data)) return;
+        pollFailures = 0;
+        syncedAt = Date.now();
+        if (!adopt(data)) { setBanner(""); return; }
         render();
+        setBanner("");
         setStatus("List updated by someone in the group");
         return refreshQuotes().then(analyseAll);
       })
-      .catch(function () { /* a missed poll is not worth a banner */ });
+      .catch(function () {
+        pollFailures++;
+        if (pollFailures < 2) return;   // one dropped request is not news
+        setBanner("Not syncing with the group — this list may be out of date. " +
+          "Last confirmed " + agoText(syncedAt) + ". Press Refresh to retry.");
+      });
+  }
+
+  function agoText(at) {
+    if (!at) return "never";
+    var secs = Math.round((Date.now() - at) / 1000);
+    if (secs < 60) return secs + "s ago";
+    if (secs < 3600) return Math.round(secs / 60) + " min ago";
+    return Math.round(secs / 3600) + "h ago";
   }
 
   /* ---------------- quotes ---------------- */

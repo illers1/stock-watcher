@@ -16,9 +16,20 @@
 import { getStore } from "@netlify/blobs";
 import { handleGroup, STORE_NAME, fail } from "../lib/group-api.mjs";
 
-/** The Blobs store, behind the two calls handleGroup actually needs. */
+/* The Blobs store, behind the two calls handleGroup actually needs.
+
+   `consistency: "strong"` is not optional here, and leaving it off was a bug.
+   Blobs defaults to eventual consistency: writes are stored in one region and
+   cached at the edge, and a read elsewhere can return the old value for up to
+   sixty seconds. For a list several people edit at once that is wrong twice
+   over. The visible half is that a friend's addition does not show up. The
+   dangerous half is that every add and remove is a read-modify-write, so an
+   edit computed from a stale read is written back over somebody else's — one
+   person's addition silently undoing another's, a minute after the fact.
+
+   Strong reads cost latency. A shared list is worth it. */
 function blobBackend() {
-  const store = getStore(STORE_NAME);
+  const store = getStore({ name: STORE_NAME, consistency: "strong" });
   return {
     read: (code) => store.get(code, { type: "json" }),
     write: (code, state) => store.setJSON(code, state),

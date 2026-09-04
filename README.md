@@ -163,6 +163,20 @@ does a read-modify-write with no compare-and-swap. The window is a single round
 trip and the fix is to add it again. Nothing is destroyed by it — a lost add is
 visible on screen, and a remove cannot go missing this way.
 
+That window is only a round trip because the Blobs store is opened with
+`consistency: "strong"`. Blobs defaults to eventual consistency, where a write
+lands in one region and takes up to sixty seconds to reach the edge everywhere
+else, and opening the store without that option was a real bug: friends' additions
+took a minute to appear, and — because every edit is a read-modify-write — an
+edit computed from a stale read could be written back over somebody else's,
+silently undoing it long after the fact. If you add another shared store, open
+it the same way.
+
+The page also says when it is not syncing. A poll that fails twice in a row
+raises a banner naming how long ago the list was last confirmed, because the
+failure mode this replaced was invisible: the list simply sat there looking
+current while nothing reached it.
+
 ## Deploying it as a website
 
 The repository is ready to deploy — there is no build step and no dependencies
