@@ -1,3 +1,6 @@
 .DS_Store
 node_modules/
 .netlify/
+
+# Local shared-watchlist storage; the deployed site uses Netlify Blobs.
+.data/

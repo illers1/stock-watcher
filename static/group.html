@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Group Watchlist — Stock Watcher</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>👥</text></svg>">
+<!-- The group code lives in the URL fragment, which browsers never send to a
+     server. Keep it out of search engines too, in case a link gets posted. -->
+<meta name="robots" content="noindex, nofollow">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>Stock Watcher</h1>
+    <nav class="tabs" aria-label="Views">
+      <a href="index.html">Watchlist</a>
+      <a href="earnings.html">Earnings</a>
+      <a href="group.html" aria-current="page">Group</a>
+    </nav>
+  </div>
+  <div class="topbar-right">
+    <span id="status" class="status" role="status" aria-live="polite">Loading…</span>
+    <button id="refresh" class="btn" title="Refresh now (press R)">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <!-- Shown until a group is joined or created. -->
+  <section class="gate" id="gate" hidden>
+    <h2>A watchlist you share</h2>
+    <p class="gate-lede">
+      One list, one link. Everybody who has the link sees the same stocks, the same
+      live prices and the same 0&ndash;100 ratings, and anyone can add or remove one.
+      No accounts, nothing to install.
+    </p>
+
+    <div class="gate-actions">
+      <div class="gate-card">
+        <h3>Start a group</h3>
+        <p>Creates an empty list and gives you a link to send your friends.</p>
+        <button type="button" class="btn btn-primary" id="create">Create a group</button>
+      </div>
+
+      <div class="gate-card">
+        <h3>Join one</h3>
+        <p>Paste the code a friend sent you — or just open their link.</p>
+        <form id="join-form" autocomplete="off">
+          <input id="join-code" type="text" placeholder="FGHJK-MNPQR" spellcheck="false"
+                 aria-label="Group code" autocapitalize="characters">
+          <button type="submit" class="btn">Join</button>
+        </form>
+      </div>
+    </div>
+
+    <p class="gate-warn">
+      The link is the only key. Anyone who has it can view and edit the list, and
+      names on the list are typed in, not verified — so share it the way you would
+      a group chat invite, and keep anything that actually matters off it.
+    </p>
+  </section>
+
+  <!-- Shown once a group is loaded. -->
+  <section id="room" hidden>
+    <div class="roombar">
+      <div class="room-id">
+        <span class="room-label">Group</span>
+        <code id="room-code">—</code>
+      </div>
+      <label class="room-name">
+        <span>You are</span>
+        <input id="display-name" type="text" placeholder="add your name" spellcheck="false"
+               maxlength="24" aria-label="Your display name">
+      </label>
+      <div class="room-buttons">
+        <button type="button" class="btn" id="copy">Copy invite link</button>
+        <button type="button" class="btn" id="leave">Leave</button>
+      </div>
+    </div>
+
+    <form id="add-form" class="addbar" autocomplete="off">
+      <div class="combo">
+        <input id="symbol-input" type="text" placeholder="Add a symbol for everyone — e.g. AAPL, Tesla"
+               aria-label="Add a stock to the group watchlist" role="combobox" aria-expanded="false"
+               aria-controls="suggestions" aria-autocomplete="list" spellcheck="false">
+        <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
+      </div>
+      <button type="submit" class="btn btn-primary">Add</button>
+    </form>
+
+    <p id="banner" class="banner" hidden></p>
+
+    <section id="summary" class="summary" hidden>
+      <div class="stat"><span class="stat-label">On the list</span><span id="sum-count" class="stat-value">0</span></div>
+      <div class="stat"><span class="stat-label">Advancing</span><span id="sum-up" class="stat-value up">0</span></div>
+      <div class="stat"><span class="stat-label">Declining</span><span id="sum-down" class="stat-value down">0</span></div>
+      <div class="stat"><span class="stat-label">Average change</span><span id="sum-avg" class="stat-value">—</span></div>
+    </section>
+
+    <details class="weights" id="weights">
+      <summary>
+        <span>Rating method: <strong id="preset-name">1-Month Sprint</strong></span>
+        <span class="weights-hint">how the 0&ndash;100 score is weighted</span>
+      </summary>
+      <div class="weights-body">
+        <div class="preset-row" id="presets"></div>
+        <label class="horizon">
+          Competition horizon
+          <input type="range" id="horizon" min="7" max="90" step="1" value="30">
+          <output id="horizon-out">30 days</output>
+        </label>
+        <div class="sliders" id="sliders"></div>
+        <p class="section-hint">Weights are yours alone — they stay in this browser and
+          are shared with your other tabs, not with the group.</p>
+      </div>
+    </details>
+
+    <div class="table-wrap" id="table-wrap">
+      <table class="quotes group" id="quotes">
+        <thead>
+          <tr>
+            <th class="col-sym"  data-sort="symbol">Symbol</th>
+            <th class="col-num"  data-sort="price">Market value</th>
+            <th class="col-num"  data-sort="change">Change</th>
+            <th class="col-num"  data-sort="changePercent">% Change</th>
+            <th class="col-by col-hide" data-sort="addedBy">Added by</th>
+            <th class="col-num col-hide" data-sort="marketCap">Mkt cap</th>
+            <th class="col-num col-score" data-sort="score">Rating</th>
+            <th class="col-act"><span class="sr-only">Remove</span></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+
+    <p id="empty" class="empty" hidden>
+      Nobody has added anything yet. Put the first stock on the list above — everyone
+      with the link will see it appear.
+    </p>
+  </section>
+</main>
+
+<div class="dp-backdrop" id="dp-backdrop" hidden></div>
+<aside class="detail-panel" id="detail-panel" hidden aria-label="Stock analysis"></aside>
+
+<footer class="foot">
+  <span>Quotes via CNBC's public feed and may be delayed. Anyone with the group link
+    can edit the list and names are self-declared — information only, not investment advice.</span>
+  <a class="footlink" href="index.html">Your private watchlist</a>
+</footer>
+
+<script type="module" src="group.js"></script>
+</body>
+</html>

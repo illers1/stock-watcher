@@ -559,3 +559,62 @@ a.blob:hover .blob-title { color: var(--accent); }
 @media (max-width: 620px) {
   .news-grid { grid-template-columns: 1fr; }
 }
+
+/* ==========================================================================
+   Group Watchlist: the shared window
+   ========================================================================== */
+
+/* ---------- the join / create gate ---------- */
+.gate { max-width: 720px; margin: 10px auto 0; text-align: center; }
+.gate h2 { font-size: 22px; margin: 0 0 8px; letter-spacing: -.02em; }
+.gate-lede { color: var(--muted); font-size: 14px; margin: 0 auto 26px; max-width: 52ch; line-height: 1.6; }
+.gate-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; text-align: left; }
+.gate-card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px;
+}
+.gate-card h3 { margin: 0 0 6px; font-size: 14.5px; }
+.gate-card p { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+#join-form { display: flex; gap: 8px; }
+#join-code {
+  flex: 1; min-width: 0; padding: 8px 11px; border: 1px solid var(--border-strong);
+  border-radius: 8px; background: var(--bg); color: var(--text);
+  font: inherit; font-size: 14px; letter-spacing: .08em; text-transform: uppercase;
+}
+#join-code:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.gate-warn {
+  margin: 24px auto 0; max-width: 56ch; font-size: 11.5px; line-height: 1.6;
+  color: var(--muted); border-top: 1px solid var(--border); padding-top: 16px;
+}
+
+/* ---------- the room bar ---------- */
+.roombar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 12px 16px; margin-bottom: 16px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.room-id { display: flex; align-items: baseline; gap: 9px; }
+.room-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+#room-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px; font-weight: 650; letter-spacing: .06em;
+  background: var(--bg); border-radius: 7px; padding: 3px 9px;
+}
+.room-name { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.room-name input {
+  width: 130px; padding: 5px 9px; border: 1px solid var(--border);
+  border-radius: 7px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px;
+}
+.room-name input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.room-buttons { display: flex; gap: 8px; margin-left: auto; }
+
+.group th.col-by { text-align: left; }
+td.by { text-align: left; }
+.unclaimed { opacity: .55; font-style: italic; }
+
+@media (max-width: 620px) {
+  .roombar { gap: 10px; }
+  .room-buttons { margin-left: 0; width: 100%; }
+  .room-buttons .btn { flex: 1; }
+  .group td.by { display: none; }
+}

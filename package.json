@@ -1,0 +1,9 @@
+{
+  "name": "stock-watcher",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Watchlist, earnings radar and shared group lists. No build step; this file exists only so Netlify installs the Blobs client the group function needs.",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}

@@ -29,6 +29,10 @@ const { default: newsFn, config: newsCfg, fetchNews } =
 const { articleUrl, standfirst, parseArticle, parseNewsFeed } =
   await import("../static/news-model.mjs" + v);
 const { band, scoreAnalysis, scoreBand, PRESETS, FACTORS } = await import("../static/score.mjs" + v);
+const { newCode, parseCode, isValidCode, formatCode, cleanName, cleanSymbol,
+        emptyGroup, applyOp, publicView, CODE_LENGTH, MAX_SYMBOLS } =
+  await import("../netlify/lib/group.mjs" + v);
+const { handleGroup } = await import("../netlify/lib/group-api.mjs" + v);
 
 const results = [];
 const check = (name, ok, detail = "") => results.push({ name, ok, detail });
@@ -468,6 +472,141 @@ res = await withStub(() => { throw new TypeError("offline"); }, () => newsFn(req
 body = await res.json();
 eq("news network failure degrades quietly", body.rows, []);
 check("news network failure is reported", typeof body.error === "string", String(body.error));
+
+/* ============ shared group watchlists ============ */
+
+/* -- codes -- */
+const seq = (start) => { let n = start; return (len) =>
+  Uint8Array.from({ length: len }, () => (n++) % 256); };
+
+eq("newCode is the right length", newCode(seq(0)).length, CODE_LENGTH);
+check("newCode uses only the safe alphabet",
+  /^[23456789ABCDEFGHJKMNPQRSTVWXYZ]+$/.test(newCode(seq(7))), newCode(seq(7)));
+check("newCode excludes look-alike characters",
+  !/[01ILOU]/.test(newCode(seq(3))), newCode(seq(3)));
+eq("newCode is deterministic for a given byte stream", newCode(seq(5)), newCode(seq(5)));
+check("different bytes give different codes", newCode(seq(0)) !== newCode(seq(11)), "");
+/* Rejection sampling must not spin forever when every byte is rejected first. */
+check("newCode survives a stream that starts with rejected bytes",
+  newCode((() => { let first = true; return (len) => { const out = new Uint8Array(len);
+    out.fill(first ? 255 : 5); first = false; return out; }; })()).length === CODE_LENGTH, "");
+
+eq("parseCode accepts a formatted code", parseCode("fghjk-mnpqr"), "FGHJKMNPQR");
+eq("parseCode accepts spaces", parseCode(" FGHJK MNPQR "), "FGHJKMNPQR");
+eq("parseCode rejects the wrong length", parseCode("FGHJK"), null);
+eq("parseCode rejects an excluded letter", parseCode("FGHJKMNPQ0"), null);
+eq("parseCode rejects junk", parseCode("<script>ab"), null);
+eq("parseCode null", parseCode(null), null);
+eq("isValidCode round-trips", isValidCode(newCode(seq(2))), true);
+eq("formatCode groups for reading", formatCode("FGHJKMNPQR"), "FGHJK-MNPQR");
+eq("formatCode leaves a non-code alone", formatCode("nope"), "nope");
+
+eq("cleanSymbol uppercases", cleanSymbol(" aapl "), "AAPL");
+eq("cleanSymbol keeps an index", cleanSymbol(".spx"), ".SPX");
+eq("cleanSymbol rejects markup", cleanSymbol("<b>"), null);
+eq("cleanSymbol rejects empty", cleanSymbol("  "), null);
+eq("cleanName trims and collapses", cleanName("  Will   Y  "), "Will Y");
+eq("cleanName caps the length", cleanName("x".repeat(80)).length, 24);
+eq("cleanName empty is null", cleanName("   "), null);
+
+/* -- applying an edit -- */
+const g0 = emptyGroup(1000);
+eq("a new group is empty", g0.symbols, []);
+eq("a new group is at revision zero", g0.revision, 0);
+
+const g1 = applyOp(g0, { action: "add", symbol: "aapl", by: " Will " }, 2000);
+eq("add normalises the symbol", g1.state.symbols[0].symbol, "AAPL");
+eq("add records who added it", g1.state.symbols[0].addedBy, "Will");
+eq("add bumps the revision", g1.state.revision, 1);
+eq("add reports a change", g1.changed, true);
+eq("add does not mutate the input", g0.symbols.length, 0);
+
+const g2 = applyOp(g1.state, { action: "add", symbol: "AAPL" }, 3000);
+eq("adding a duplicate changes nothing", g2.changed, false);
+eq("adding a duplicate is not an error", g2.error, null);
+eq("adding a duplicate leaves the revision alone", g2.state.revision, 1);
+
+const g3 = applyOp(g1.state, { action: "add", symbol: "not a symbol" }, 3000);
+eq("an invalid symbol is refused", g3.error, "That is not a valid symbol");
+eq("an invalid symbol changes nothing", g3.changed, false);
+
+const g4 = applyOp(g1.state, { action: "remove", symbol: "AAPL" }, 4000);
+eq("remove empties the list", g4.state.symbols, []);
+eq("remove bumps the revision", g4.state.revision, 2);
+const g5 = applyOp(g4.state, { action: "remove", symbol: "MSFT" }, 5000);
+eq("removing what is absent changes nothing", g5.changed, false);
+
+eq("an unknown action is refused", applyOp(g0, { action: "drop" }).error, "Unknown action");
+eq("a missing op is refused", applyOp(g0, null).error, "Unknown action");
+eq("applyOp repairs a corrupt state", applyOp(null, { action: "add", symbol: "X" }).changed, true);
+
+let full = emptyGroup(0);
+for (let i = 0; i < MAX_SYMBOLS; i++) full = applyOp(full, { action: "add", symbol: "S" + i }).state;
+eq("the list fills to the cap", full.symbols.length, MAX_SYMBOLS);
+check("adding past the cap is refused",
+  applyOp(full, { action: "add", symbol: "ZZZZ" }).error.includes(String(MAX_SYMBOLS)), "");
+
+const view = publicView("FGHJKMNPQR", g1.state);
+eq("the public view carries the code", view.code, "FGHJKMNPQR");
+eq("the public view carries the symbols", view.symbols.map(e => e.symbol), ["AAPL"]);
+eq("the public view has no error", view.error, null);
+eq("the public view of a broken state is empty", publicView("X", null).symbols, []);
+
+/* -- the endpoint, over an in-memory store -- */
+const memStore = () => {
+  const map = new Map();
+  return {
+    map,
+    read: async (k) => (map.has(k) ? JSON.parse(map.get(k)) : null),
+    write: async (k, val) => { map.set(k, JSON.stringify(val)); },
+  };
+};
+const call = async (store, body, bytes = seq(0)) =>
+  (await handleGroup(body, store, bytes, 9000)).json();
+
+let store = memStore();
+let g = await call(store, { action: "create" });
+eq("create returns a valid code", isValidCode(g.code), true);
+eq("create returns an empty list", g.symbols, []);
+eq("create stores the group", store.map.size, 1);
+
+g = await call(store, { action: "add", code: g.code, symbol: "aapl", by: "Will" });
+eq("add through the endpoint normalises", g.symbols[0].symbol, "AAPL");
+eq("add through the endpoint credits the adder", g.symbols[0].addedBy, "Will");
+eq("add through the endpoint bumps the revision", g.revision, 1);
+
+const shared = g.code;
+g = await call(store, { action: "get", code: formatCode(shared).toLowerCase() });
+eq("a formatted, lower-case code still opens the group", g.symbols.length, 1);
+
+g = await call(store, { action: "remove", code: shared, symbol: "AAPL" });
+eq("remove through the endpoint empties the list", g.symbols, []);
+
+g = await call(store, { action: "get", code: "ZZZZZZZZZZ" });
+eq("an unknown group is reported, not invented",
+   g.error, "No group with that code. Check the link, or make a new group.");
+g = await call(store, { action: "get", code: "nope" });
+eq("an invalid code is reported", g.error, "That group code is not valid");
+g = await call(store, { action: "sudo", code: shared });
+eq("an unknown action is refused at the endpoint", g.error, "Unknown action");
+
+/* A code collision must not overwrite somebody else's list. */
+const fixedBytes = () => Uint8Array.from({ length: CODE_LENGTH }, () => 0);
+store = memStore();
+const a = await call(store, { action: "create" }, fixedBytes);
+await call(store, { action: "add", code: a.code, symbol: "AAPL" }, fixedBytes);
+const b = await call(store, { action: "create" }, fixedBytes);
+eq("a create that keeps colliding gives up rather than clobbering",
+   b.error, "Could not allocate a group code — try again");
+const still = await call(store, { action: "get", code: a.code }, fixedBytes);
+eq("the existing group survives the collision", still.symbols.map(e => e.symbol), ["AAPL"]);
+
+/* Storage failures must surface, not corrupt. */
+const brokenStore = { read: async () => { throw new TypeError("blobs down"); }, write: async () => {} };
+let threw = false;
+try { await handleGroup({ action: "get", code: "FGHJKMNPQR" }, brokenStore); }
+catch (e) { threw = true; }
+eq("a store failure propagates for the handler to report", threw, true);
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

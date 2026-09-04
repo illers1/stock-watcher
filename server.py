@@ -17,6 +17,7 @@ import datetime
 import json
 import os
 import re
+import secrets
 import socketserver
 import sys
 import threading
@@ -29,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".data")
 
 QUOTE_URL = "https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol"
 SEARCH_URL = "https://query1.finance.yahoo.com/v1/finance/search"
@@ -411,6 +413,127 @@ def fetch_calendar(days):
     }
 
 
+# --------------------------------------------------------------------------
+# Shared watchlists. The deployed site keeps these in Netlify Blobs; locally a
+# JSON file does the same job. The rules for what an edit means live in
+# netlify/lib/group.mjs and are mirrored here — keep the two in step.
+# --------------------------------------------------------------------------
+
+CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
+CODE_LENGTH = 10
+GROUP_MAX_SYMBOLS = 60
+GROUP_MAX_NAME = 24
+GROUPS_PATH = os.path.join(DATA_DIR, "groups.json")
+
+_groups_lock = threading.Lock()
+
+
+def _read_groups():
+    try:
+        with open(GROUPS_PATH, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def _write_groups(groups):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    tmp = GROUPS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(groups, fh)
+    os.replace(tmp, GROUPS_PATH)   # never leave a half-written file behind
+
+
+def parse_code(raw):
+    text = str(raw or "").upper()
+    for ch in " -_":
+        text = text.replace(ch, "")
+    if len(text) != CODE_LENGTH or any(c not in CODE_ALPHABET for c in text):
+        return None
+    return text
+
+
+def clean_symbol(raw):
+    text = str(raw or "").strip().upper()
+    return text if text and SYMBOL_RE.match(text) else None
+
+
+def clean_name(raw):
+    text = " ".join(str(raw or "").split())[:GROUP_MAX_NAME]
+    return text or None
+
+
+def public_view(code, state):
+    return {
+        "code": code,
+        "symbols": [{"symbol": e["symbol"], "addedBy": e.get("addedBy"),
+                     "at": e.get("at")} for e in state.get("symbols", [])],
+        "revision": state.get("revision", 0),
+        "updatedAt": state.get("updatedAt"),
+        "error": None,
+    }
+
+
+def group_action(body):
+    """One edit, under a lock so concurrent local requests cannot interleave."""
+    action = str(body.get("action") or "")
+    now = int(time.time() * 1000)
+
+    with _groups_lock:
+        groups = _read_groups()
+
+        if action == "create":
+            for _ in range(5):
+                code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
+                if code in groups:
+                    continue
+                groups[code] = {"symbols": [], "revision": 0,
+                                "createdAt": now, "updatedAt": now}
+                _write_groups(groups)
+                return public_view(code, groups[code])
+            return {"error": "Could not allocate a group code - try again", "symbols": None}
+
+        code = parse_code(body.get("code"))
+        if not code:
+            return {"error": "That group code is not valid", "symbols": None}
+        state = groups.get(code)
+        if state is None:
+            return {"error": "No group with that code. Check the link, or make a new group.",
+                    "symbols": None}
+
+        if action == "get":
+            return public_view(code, state)
+
+        if action in ("add", "remove"):
+            symbol = clean_symbol(body.get("symbol"))
+            if not symbol:
+                return {"error": "That is not a valid symbol", "symbols": None}
+            entries = state.get("symbols", [])
+            changed = False
+
+            if action == "add":
+                if not any(e["symbol"] == symbol for e in entries):
+                    if len(entries) >= GROUP_MAX_SYMBOLS:
+                        return {"error": "A group holds at most %d symbols" % GROUP_MAX_SYMBOLS,
+                                "symbols": None}
+                    entries = entries + [{"symbol": symbol,
+                                          "addedBy": clean_name(body.get("by")), "at": now}]
+                    changed = True
+            else:
+                kept = [e for e in entries if e["symbol"] != symbol]
+                changed = len(kept) != len(entries)
+                entries = kept
+
+            if changed:
+                state = dict(state, symbols=entries,
+                             revision=state.get("revision", 0) + 1, updatedAt=now)
+                groups[code] = state
+                _write_groups(groups)
+            return public_view(code, state)
+
+        return {"error": "Unknown action", "symbols": None}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=STATIC_DIR, **kwargs)
@@ -435,6 +558,17 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != "/api/group":
+            return self.send_json({"error": "Not found"}, status=404)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8", "replace"))
+        except Exception:
+            return self.send_json({"error": "Expected a JSON body", "symbols": None})
+        return self.send_json(group_action(body if isinstance(body, dict) else {}))
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)

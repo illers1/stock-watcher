@@ -1,16 +1,18 @@
 # Stock Watcher
 
-A web app for watching stocks, in two windows that share one rating engine:
+A web app for watching stocks, in three windows that share one rating engine:
 
 - **Watchlist** — a cumulative list you choose: live price, dollar change and
   percentage change, colour-coded green for up and red for down.
 - **Earnings** — everyone reporting inside a window you choose, taken from
   Nasdaq's earnings calendar and put through the same analysis, so a week of
   scheduled reports can be ranked rather than merely listed.
+- **Group** — one list several people share through a link, where anyone can
+  add or remove a stock and everybody sees it.
 
-Each visitor keeps their own watchlist in their own browser. Runs two ways from
-the same front end — as a public website on Netlify, or locally from a single
-Python file.
+The first two keep everything in your own browser. Runs two ways from the same
+front end — as a public website on Netlify, or locally from a single Python
+file.
 
 ## The watchlist window
 
@@ -124,6 +126,43 @@ count of what is rated so far is in the header stats.
 A scheduled report is a known risk, not a known direction. A high rating going
 into earnings says the visible factors line up, not that the print will be good.
 
+## The group window
+
+`group.html`. The other two windows are private to your browser; this one is a
+list several people edit together.
+
+- **Starting one** — press *Create a group*. You get a ten-character code and a
+  link. Send the link; anyone who opens it is in.
+- **Using it** — add and remove symbols exactly as on your own watchlist. Each
+  row is credited to whoever added it, everyone sees the same live prices, and
+  the analysis panel ranks a stock against the rest of the group's list.
+- **Staying in sync** — the page polls every twenty seconds and catches up the
+  moment you switch back to the tab, so a friend's addition appears without
+  anybody reloading. Edits are not serialised, and a reply that arrives out of
+  order is discarded by revision number rather than applied.
+- **What is yours alone** — the rating weights, the horizon, and the name you
+  type in. Only the symbols and their credits are shared.
+
+### What the code protects, and what it does not
+
+The group code is the only credential. It is ten characters from a 30-letter
+alphabet with no look-alikes, so it will not be found by guessing, and it is
+kept out of the places URLs leak from: it lives in the URL fragment, which
+browsers never transmit, and every call to `/api/group` is a POST, so the code
+never reaches a query string, an access log or a `Referer` header. The page is
+`noindex` in case a link is posted somewhere public.
+
+Past that, be clear-eyed. Anyone holding the link can read and edit the list,
+there is no way to remove someone short of starting a new group, and the name
+against each row is typed in rather than authenticated — anybody can claim to
+be anybody. That is a fair trade for a few friends swapping tickers and the
+wrong one for anything that matters.
+
+Two people adding in the same instant can cost one of the two adds: the store
+does a read-modify-write with no compare-and-swap. The window is a single round
+trip and the fix is to add it again. Nothing is destroyed by it — a lost add is
+visible on screen, and a remove cannot go missing this way.
+
 ## Deploying it as a website
 
 The repository is ready to deploy — there is no build step and no dependencies
@@ -133,6 +172,12 @@ to install.
 2. In Netlify: **Add new site → Import an existing project**, pick the repo, and
    deploy. `netlify.toml` already sets the publish directory and functions
    directory, so leave the build settings untouched.
+
+There is still no build step. `package.json` exists for one reason: the group
+window keeps its lists in [Netlify Blobs](https://docs.netlify.com/blobs/overview/),
+whose client has to be installed for the function bundle. Blobs needs no
+account, no credentials and no configuration — the platform wires it up. Every
+other page runs on plain static files.
 
 That gives a `*.netlify.app` URL that anyone can open, on any device. To use
 your own domain, add it under **Domain management**.
@@ -154,14 +199,20 @@ Python 3.7+ and nothing else. Options: `--port 9000`, `--no-open`,
 ## How it works
 
 - `static/` — the whole front end, no build step and no frameworks.
-  `app.js` drives the watchlist and `earnings.js` the earnings window;
+  `app.js` drives the watchlist, `earnings.js` the earnings window and
+  `group.js` the shared one;
   `analyze.mjs` turns raw upstream payloads into one model and
   `earnings-model.mjs` does the same for calendar rows; `score.mjs` holds the
   rating (pure functions, no DOM); `detail.mjs` renders the analysis panel for
   both windows.
 - `netlify/functions/quotes.mjs`, `search.mjs`, `analysis.mjs`, `calendar.mjs`,
-  `earnings.mjs`, `news.mjs` — the deployed API, as serverless functions routed to
+  `earnings.mjs`, `news.mjs`, `group.mjs` — the deployed API, as serverless functions routed to
   `/api/quotes`, `/api/search` and so on by their own `config.path` exports.
+- `netlify/lib/group.mjs` — the rules for a shared list: code generation and
+  validation, and `applyOp`, the one place that decides what an edit means.
+  `netlify/lib/group-api.mjs` builds the responses around it and takes its
+  store as an argument, so the tests drive the whole endpoint against an
+  in-memory one; `netlify/functions/group.mjs` is only the Blobs wiring.
 - `static/news-model.mjs` — the headline parsing for `/api/news`, kept apart
   from the per-symbol news in `analyze.mjs` because the markets feed carries a
   standfirst and a relative timestamp the other one does not.
@@ -170,8 +221,9 @@ Python 3.7+ and nothing else. Options: `--port 9000`, `--no-open`,
   `/api/earnings` (which keeps the day-by-day listing).
 - `netlify/lib/format.mjs` — the quote parsing, kept separate from the
   functions so it stays testable on its own.
-- `tests/` — 226 assertions over the parsing, the API handlers, the analysis
-  model, the earnings calendar, the news feed and the scoring engine, run in a
+- `tests/` — 286 assertions over the parsing, the API handlers, the analysis
+  model, the earnings calendar, the news feed, the group endpoint and the
+  scoring engine, run in a
   browser with no test runner to install. Serve the repository root and open
   `/tests/`:
 
@@ -184,7 +236,9 @@ Python 3.7+ and nothing else. Options: `--port 9000`, `--no-open`,
   (rate limiting, timeouts, malformed responses) as well as the happy one.
   `tests/` sits outside the publish directory, so it is never deployed.
 - `server.py` — the local equivalent: serves `static/` and exposes the same
-  endpoints. Only the quote endpoint duplicates parsing logic in Python; the
+  endpoints. Group lists go to `.data/groups.json` rather than Netlify Blobs,
+  so the shared window works offline; the rules for an edit are mirrored from
+  `netlify/lib/group.mjs`, so change the two together. Only the quote endpoint duplicates parsing logic in Python; the
   analysis endpoints just fetch and bundle, leaving every interpretation to
   `static/analyze.mjs`, which both runtimes share. If you change how a *quote*
   field is parsed, change it in both `format.mjs` and `server.py`.
