@@ -522,3 +522,40 @@ tr.day-head + tr td { border-top: 0; }
   .earnings tr { grid-template-rows: auto auto auto; }
   .earnings td.act { right: 4px; }
 }
+
+/* ---------- market news wall ---------- */
+.newswall { margin: 34px 0 8px; padding-top: 22px; border-top: 1px solid var(--border); }
+.newswall h2 {
+  margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); font-weight: 650;
+}
+.news-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+  gap: 12px; margin-top: 14px;
+}
+.blob {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 14px 15px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  text-decoration: none; color: inherit;
+}
+a.blob:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
+a.blob:hover .blob-title { color: var(--accent); }
+.blob-title { font-size: 13.5px; font-weight: 600; line-height: 1.4; letter-spacing: -.01em; }
+.blob-sum { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0; }
+.blob-meta {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: auto; padding-top: 4px; font-size: 11.5px; color: var(--muted);
+}
+.blob-sym {
+  font-weight: 650; letter-spacing: .01em; color: var(--text);
+  background: var(--bg); border-radius: 6px; padding: 1px 6px;
+}
+/* A story about a company reporting inside the window is the one to read. */
+.blob-sym.on-cal { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+.blob-dot { opacity: .5; }
+.news-empty { color: var(--muted); font-size: 12.5px; margin: 14px 0 0; }
+
+@media (max-width: 620px) {
+  .news-grid { grid-template-columns: 1fr; }
+}

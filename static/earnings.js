@@ -10,6 +10,7 @@
 
 import { parseAnalysis } from "./analyze.mjs";
 import { parseEarnings, summarise } from "./earnings-model.mjs";
+import { parseNewsFeed } from "./news-model.mjs";
 import { scoreAnalysis, scoreBand, FACTORS, PRESETS, DEFAULT_HORIZON_DAYS } from "./score.mjs";
 import { renderDetail } from "./detail.mjs";
 
@@ -24,6 +25,7 @@ import { renderDetail } from "./detail.mjs";
   var ANALYSIS_TTL_MS = 30 * 60 * 1000;
   var ANALYSIS_CONCURRENCY = 3;
   var RATE_BATCH = 12;          // how many rows a rating pass covers
+  var NEWS_COUNT = 9;           // headline cards at the foot of the page
   var QUOTE_LIMIT = 400;        // symbols worth a live price on one screen
   var QUOTE_CHUNK = 50;         // the quote feed takes the whole set at once
 
@@ -32,7 +34,8 @@ import { renderDetail } from "./detail.mjs";
    "sum-amc", "sum-rated", "cal", "table-wrap", "weights", "presets", "sliders",
    "preset-name", "horizon", "horizon-out", "detail-panel", "dp-backdrop",
    "window", "session", "mincap", "minprice", "query", "filters", "rate-more",
-   "rate-btn", "rate-note", "filter-note"].forEach(function (id) {
+   "rate-btn", "rate-note", "filter-note", "newswall", "news-grid",
+   "news-note"].forEach(function (id) {
     els[id.replace(/-(\w)/g, function (m, c) { return c.toUpperCase(); })] =
       document.getElementById(id);
   });
@@ -456,6 +459,50 @@ import { renderDetail } from "./detail.mjs";
     });
   }
 
+  /* ---------------- market news ---------------- */
+
+  /* Fetched independently of the calendar, and rendered even when the calendar
+     failed: the headlines are still worth reading if Nasdaq's schedule feed is
+     the part that is down. */
+  function loadNews() {
+    return fetch("/api/news?limit=" + NEWS_COUNT)
+      .then(function (r) { return r.json(); })
+      .then(function (d) { renderNews(parseNewsFeed(d), d && d.error); })
+      .catch(function () { renderNews([], "unreachable"); });
+  }
+
+  function renderNews(articles, failed) {
+    els.newswall.hidden = false;
+    if (!articles.length) {
+      els.newsGrid.innerHTML = '<p class="news-empty">' +
+        (failed ? "Headlines are unavailable just now." : "No headlines returned.") + '</p>';
+      return;
+    }
+    els.newsGrid.innerHTML = articles.map(blobHtml).join("");
+  }
+
+  function blobHtml(a) {
+    // A ticker that reports inside the current window is flagged: that is the
+    // story most worth reading on this particular page.
+    var onCal = a.symbol && all.some(function (r) { return r.symbol === a.symbol; });
+    var meta = '<div class="blob-meta">' +
+      (a.symbol ? '<span class="blob-sym' + (onCal ? " on-cal" : "") + '">' +
+        esc(a.symbol) + '</span>' : "") +
+      (a.publisher ? '<span>' + esc(a.publisher) + '</span>' : "") +
+      (a.publisher && a.when ? '<span class="blob-dot">·</span>' : "") +
+      (a.when ? '<span>' + esc(a.when) + '</span>' : "") +
+      '</div>';
+
+    var inner =
+      '<span class="blob-title">' + esc(a.title) + '</span>' +
+      (a.summary ? '<p class="blob-sum">' + esc(a.summary) + '</p>' : "") + meta;
+
+    return a.url
+      ? '<a class="blob" href="' + esc(a.url) + '" target="_blank" rel="noopener noreferrer">' +
+        inner + '</a>'
+      : '<div class="blob">' + inner + '</div>';
+  }
+
   /* ---------------- detail panel ---------------- */
 
   function openDetail(sym) {
@@ -615,7 +662,11 @@ import { renderDetail } from "./detail.mjs";
   }
 
   els.rateBtn.addEventListener("click", function () { rateBatch(); });
-  els.refresh.addEventListener("click", function () { if (!loading) loadCalendar(); });
+  els.refresh.addEventListener("click", function () {
+    if (loading) return;
+    loadCalendar();
+    loadNews();
+  });
 
   els.detailPanel.addEventListener("click", function (e) {
     if (e.target.closest("[data-close]")) closeDetail();
@@ -665,4 +716,5 @@ import { renderDetail } from "./detail.mjs";
   renderWeightControls();
   render();
   loadCalendar();
+  loadNews();
 })();

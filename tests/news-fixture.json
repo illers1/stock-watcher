@@ -1,0 +1,106 @@
+{
+ "_comment": "Trimmed capture of api.nasdaq.com/api/news/topic/articlebysymbol?q=Markets|4006, plus hand-made rows for the shapes the live feed happened not to show.",
+ "feed": {
+  "data": {
+   "rows": [
+    {
+     "ago": "17 minutes ago",
+     "created": "Sep 3, 2026",
+     "description": "Key PointsLululemon reported its worst comparable sales result since the Great Recession.",
+     "id": 28311331,
+     "image": "",
+     "imagedomain": "https://www.nasdaq.com/sites/acquia.prod/files",
+     "primarysymbol": "lulu",
+     "primarytopic": "Markets|4006",
+     "primarytopic_url": "/topic/markets",
+     "publisher": "The Motley Fool",
+     "publisher_logo": "/sites/acquia.prod/files/2022/09/28/Motley%20Fool.png",
+     "related_symbols": [
+      "lulu|stocks"
+     ],
+     "title": "Lululemon's Comparable Sales Fell 9%. Can New CEO Heidi O'Neill Turn Things Around or Is the Brand Broken?",
+     "url": "/articles/lululemons-comparable-sales-fell-9-can-new-ceo-heidi-oneill-turn-things-around-or-brand"
+    },
+    {
+     "ago": "21 minutes ago",
+     "created": "Sep 3, 2026",
+     "description": "Key PointsSpace company Rocket Lab has been described as a mini-Space Exploration Technologies.",
+     "id": 28311326,
+     "image": "",
+     "imagedomain": "https://www.nasdaq.com/sites/acquia.prod/files",
+     "primarysymbol": "rklb",
+     "primarytopic": "Markets|4006",
+     "primarytopic_url": "/topic/markets",
+     "publisher": "The Motley Fool",
+     "publisher_logo": "/sites/acquia.prod/files/2022/09/28/Motley%20Fool.png",
+     "related_symbols": [
+      "rklb|stocks",
+      "irdm|stocks"
+     ],
+     "title": "Should You Ignore Rocket Lab Stock? Why SpaceX May Be the Better Space Stock Today.",
+     "url": "/articles/should-you-ignore-rocket-lab-stock-why-spacex-may-be-better-space-stock-today"
+    },
+    {
+     "ago": "29 minutes ago",
+     "created": "Sep 3, 2026",
+     "description": "Key PointsA federal judge declined to break up Google's ad tech business on Wednesday, accepting most of the parties' proposed behavioral remedies instead.",
+     "id": 28311316,
+     "image": "",
+     "imagedomain": "https://www.nasdaq.com/sites/acquia.prod/files",
+     "primarysymbol": "goog",
+     "primarytopic": "Markets|4006",
+     "primarytopic_url": "/topic/markets",
+     "publisher": "The Motley Fool",
+     "publisher_logo": "/sites/acquia.prod/files/2022/09/28/Motley%20Fool.png",
+     "related_symbols": [
+      "goog|stocks",
+      "googl|stocks"
+     ],
+     "title": "Google Just Won the Right to Keep Its Ad Tech Tools. They Live in the One Business It Has That Is Shrinking.",
+     "url": "/articles/google-just-won-right-keep-its-ad-tech-tools-they-live-one-business-it-has-shrinking"
+    },
+    {
+     "ago": "17 minutes ago",
+     "created": "Sep 3, 2026",
+     "description": "Key PointsLululemon reported its worst comparable sales result since the Great Recession.",
+     "id": 28311331,
+     "image": "",
+     "imagedomain": "https://www.nasdaq.com/sites/acquia.prod/files",
+     "primarysymbol": "lulu",
+     "primarytopic": "Markets|4006",
+     "primarytopic_url": "/topic/markets",
+     "publisher": "The Motley Fool",
+     "publisher_logo": "/sites/acquia.prod/files/2022/09/28/Motley%20Fool.png",
+     "related_symbols": [
+      "lulu|stocks"
+     ],
+     "title": "Lululemon's Comparable Sales Fell 9%. Can New CEO Heidi O'Neill Turn Things Around or Is the Brand Broken?",
+     "url": "/articles/lululemons-comparable-sales-fell-9-can-new-ceo-heidi-oneill-turn-things-around-or-brand"
+    },
+    {
+     "title": "No link, no standfirst, no ticker",
+     "description": "",
+     "publisher": "RTTNews",
+     "created": "Sep 3, 2026",
+     "ago": "",
+     "url": "",
+     "primarysymbol": ""
+    },
+    {
+     "title": "",
+     "description": "Headline missing entirely",
+     "publisher": "X",
+     "url": "/articles/nope"
+    },
+    {
+     "title": "Already absolute",
+     "description": "Key PointsAbsolute links are left alone.",
+     "publisher": "Reuters",
+     "ago": "2 hours ago",
+     "primarysymbol": "aapl",
+     "url": "https://example.com/story"
+    }
+   ]
+  }
+ }
+}

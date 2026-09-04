@@ -24,6 +24,10 @@ const { default: earningsFn, config: earningsCfg, buildEarnings } =
 const { tradingDays } = await import("../netlify/lib/calendar.mjs" + v);
 const { money, session, daysAway, parseRow, parseEarnings, summarise } =
   await import("../static/earnings-model.mjs" + v);
+const { default: newsFn, config: newsCfg, fetchNews } =
+  await import("../netlify/functions/news.mjs" + v);
+const { articleUrl, standfirst, parseArticle, parseNewsFeed } =
+  await import("../static/news-model.mjs" + v);
 const { band, scoreAnalysis, scoreBand, PRESETS, FACTORS } = await import("../static/score.mjs" + v);
 
 const results = [];
@@ -382,6 +386,88 @@ eq("summary counts", sum.count, 7);
 eq("summary counts the pre-market names", sum.bmo, 2);
 eq("summary counts the after-hours names", sum.amc, 2);
 eq("summary counts the $10B-and-up names", sum.largeCaps, 4);
+
+/* ============ market news ============ */
+const newsFix = await (await fetch("./news-fixture.json")).json();
+
+eq("articleUrl absolutes a site-relative path",
+   articleUrl("/articles/x"), "https://www.nasdaq.com/articles/x");
+eq("articleUrl leaves an absolute url alone",
+   articleUrl("https://example.com/s"), "https://example.com/s");
+eq("articleUrl drops a path it cannot resolve", articleUrl("articles/x"), null);
+eq("articleUrl empty", articleUrl(""), null);
+eq("articleUrl null", articleUrl(null), null);
+
+eq("standfirst strips the Key Points lead-in",
+   standfirst("Key PointsLululemon reported a bad quarter."), "Lululemon reported a bad quarter.");
+eq("standfirst collapses whitespace", standfirst("a   b\n c"), "a b c");
+eq("standfirst empty", standfirst(""), null);
+eq("standfirst that is only the lead-in is dropped", standfirst("Key Points"), null);
+check("standfirst truncates with an ellipsis",
+  standfirst("x".repeat(400)).length === 150 && standfirst("x".repeat(400)).endsWith("\u2026"),
+  String(standfirst("x".repeat(400)).length));
+eq("standfirst leaves a short line intact", standfirst("Short one."), "Short one.");
+
+const rowsIn = newsFix.feed.data.rows;
+const art = parseArticle(rowsIn[0]);
+check("article has a title", !!art.title, String(art.title));
+check("article has a publisher", !!art.publisher, String(art.publisher));
+eq("article symbol is uppercased", art.symbol, rowsIn[0].primarysymbol.toUpperCase());
+check("article url is absolute", art.url.startsWith("https://"), String(art.url));
+eq("article prefers the relative timestamp", art.when, rowsIn[0].ago);
+
+const bare = parseArticle(rowsIn[4]);
+eq("a row with no link yields a null url", bare.url, null);
+eq("a row with no standfirst yields a null summary", bare.summary, null);
+eq("a row with no ticker yields a null symbol", bare.symbol, null);
+eq("with no relative time it falls back to the date", bare.when, "Sep 3, 2026");
+
+const feed = parseNewsFeed({ rows: rowsIn });
+eq("a repeated filing appears once", feed.length, 5);
+eq("a row with no headline is dropped",
+   feed.filter(a => !a.title).length, 0);
+eq("an already-absolute url survives the feed",
+   feed[feed.length - 1].url, "https://example.com/story");
+eq("empty payload", parseNewsFeed({}), []);
+eq("null payload", parseNewsFeed(null), []);
+
+eq("news route", newsCfg.path, "/api/news");
+
+let newsBody = await withStub(() => ok(newsFix.feed), () => fetchNews(9));
+eq("fetchNews returns the upstream rows", newsBody.rows.length, rowsIn.length);
+eq("fetchNews no error", newsBody.error, null);
+eq("one upstream call for the feed", calls.length, 1);
+const newsUp = new URL(calls[0].url);
+eq("news upstream host", newsUp.host, "api.nasdaq.com");
+eq("news asks for the markets topic", newsUp.searchParams.get("q"), "Markets|4006");
+eq("news honours the limit", newsUp.searchParams.get("limit"), "9");
+/* The topic endpoint answers 301 and returns an empty body if not followed. */
+eq("news follows redirects", calls[0].opts?.redirect, "follow");
+
+res = await withStub(() => ok(newsFix.feed), () => newsFn(req("/api/news?limit=3")));
+body = await res.json();
+eq("news status", res.status, 200);
+eq("news caps the request at the asked-for limit",
+   new URL(calls[0].url).searchParams.get("limit"), "3");
+check("news sets a CDN cache header",
+  /max-age=600/.test(res.headers.get("Netlify-CDN-Cache-Control") ?? ""),
+  res.headers.get("Netlify-CDN-Cache-Control"));
+
+res = await withStub(() => ok(newsFix.feed), () => newsFn(req("/api/news?limit=999")));
+eq("an oversized limit is capped",
+   new URL(calls[0].url).searchParams.get("limit"), "24");
+
+res = await withStub(() => new Response("nope", { status: 500 }), () =>
+  newsFn(req("/api/news")));
+body = await res.json();
+eq("news upstream 500 still returns 200", res.status, 200);
+eq("news upstream 500 reports the code", body.error, "HTTP 500");
+eq("news upstream 500 yields no rows", body.rows, []);
+
+res = await withStub(() => { throw new TypeError("offline"); }, () => newsFn(req("/api/news")));
+body = await res.json();
+eq("news network failure degrades quietly", body.rows, []);
+check("news network failure is reported", typeof body.error === "string", String(body.error));
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

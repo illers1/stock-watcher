@@ -111,6 +111,11 @@ symbols you picked; this starts from the calendar.
 - **Ranking** — the analysis panel ranks a company against the others rated in
   the window, which is the comparison the page exists to make.
 - **`+`** adds a company to your watchlist without leaving the page.
+- **Market news** — a wall of headline cards at the foot of the page, from
+  Nasdaq's markets feed. A card whose ticker reports inside the current window
+  is flagged, since on this page that is the one worth reading. The wall is
+  fetched independently of the calendar and still renders if the schedule feed
+  is the part that is down.
 
 Scoring is not free: each company is a full analysis fan-out, so rows are rated
 a batch at a time — the first twelve automatically, then more on request. The
@@ -155,15 +160,18 @@ Python 3.7+ and nothing else. Options: `--port 9000`, `--no-open`,
   rating (pure functions, no DOM); `detail.mjs` renders the analysis panel for
   both windows.
 - `netlify/functions/quotes.mjs`, `search.mjs`, `analysis.mjs`, `calendar.mjs`,
-  `earnings.mjs` — the deployed API, as serverless functions routed to
+  `earnings.mjs`, `news.mjs` — the deployed API, as serverless functions routed to
   `/api/quotes`, `/api/search` and so on by their own `config.path` exports.
+- `static/news-model.mjs` — the headline parsing for `/api/news`, kept apart
+  from the per-symbol news in `analyze.mjs` because the markets feed carries a
+  standfirst and a relative timestamp the other one does not.
 - `netlify/lib/calendar.mjs` — the walk over Nasdaq's date-indexed calendar,
   shared by `/api/calendar` (which collapses it to one date per symbol) and
   `/api/earnings` (which keeps the day-by-day listing).
 - `netlify/lib/format.mjs` — the quote parsing, kept separate from the
   functions so it stays testable on its own.
-- `tests/` — 184 assertions over the parsing, the API handlers, the analysis
-  model, the earnings calendar and the scoring engine, run in a
+- `tests/` — 226 assertions over the parsing, the API handlers, the analysis
+  model, the earnings calendar, the news feed and the scoring engine, run in a
   browser with no test runner to install. Serve the repository root and open
   `/tests/`:
 

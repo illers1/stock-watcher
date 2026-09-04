@@ -254,6 +254,8 @@ def search(query):
 
 NASDAQ = "https://api.nasdaq.com/api"
 CALENDAR_URL = NASDAQ + "/calendar/earnings"
+NEWS_URL = NASDAQ + "/news/topic/articlebysymbol"
+MARKETS_TOPIC = "Markets|4006"
 
 
 def source_urls(symbol):
@@ -371,6 +373,22 @@ def fetch_earnings(days):
     }
 
 
+def fetch_news(limit):
+    """Nasdaq's general markets headlines, for the foot of the Earnings page."""
+    qs = urllib.parse.urlencode({
+        "q": MARKETS_TOPIC, "offset": "0", "limit": str(limit), "fallback": "true",
+    })
+    try:
+        # urllib follows the 301 this endpoint answers with; without it the
+        # body comes back empty.
+        data = raw_json("%s?%s" % (NEWS_URL, qs), timeout=9)
+        return (data.get("data") or {}).get("rows") or [], None
+    except urllib.error.HTTPError as exc:
+        return [], "HTTP %s" % exc.code
+    except Exception as exc:
+        return [], type(exc).__name__
+
+
 def fetch_calendar(days):
     """Walk the earnings calendar forward and index it by symbol."""
     dates = trading_days(days)
@@ -462,6 +480,15 @@ class Handler(SimpleHTTPRequestHandler):
             result = fetch_calendar(days)
             result.update({"asOf": time.time(), "error": None})
             return self.send_json(result)
+
+        if parsed.path == "/api/news":
+            try:
+                limit = int((params.get("limit") or ["9"])[0])
+            except ValueError:
+                limit = 9
+            limit = max(1, min(24, limit))
+            rows, error = fetch_news(limit)
+            return self.send_json({"rows": rows, "asOf": time.time(), "error": error})
 
         if parsed.path == "/api/earnings":
             try:
