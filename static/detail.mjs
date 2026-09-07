@@ -90,18 +90,32 @@ function catalystSection(a) {
   }
   const soon = next.daysAway >= 0 && next.daysAway <= 30;
   const when = next.time && next.time.includes("after") ? "after the close"
-    : next.time && next.time.includes("before") ? "before the open" : "time not announced";
+    : next.time && next.time.includes("pre") || next.time && next.time.includes("before") ? "before the open"
+    : "time of day not announced";
   return `
     <div class="catalyst ${soon ? "catalyst-hot" : ""}">
       <div class="cat-days">${next.daysAway}<span>days</span></div>
       <div>
         <strong>Earnings ${esc(next.date)}</strong> — ${esc(when)}
-        ${next.epsForecast !== null ? `<br>Consensus EPS estimate ${n2(next.epsForecast)}` : ""}
+        ${next.epsForecast !== null ? `<br>Consensus EPS estimate ${n2(next.epsForecast)}${
+          next.estimateCount ? ` from ${n0(next.estimateCount)} analysts` : ""}` : ""}
         ${a.earnings?.beatRate !== null && a.earnings?.beatRate !== undefined
           ? `<br>Beat consensus in ${Math.round(a.earnings.beatRate * 100)}% of the last ${a.earnings.quarters} quarters`
           : ""}
+        ${next.lastYearReported
+          ? `<br><span class="${next.corroborated ? "corroborated" : "uncorroborated"}">${
+              next.corroborated
+                ? `Consistent with last year (reported ${esc(next.lastYearReported)}, ${next.yearGap} days apart)`
+                : `Does not match last year's cadence (reported ${esc(next.lastYearReported)}, ${next.yearGap} days apart) — likely an estimate`
+            }</span>`
+          : ""}
       </div>
-    </div>`;
+    </div>
+    <p class="caveat">Dates come from the exchange calendar. Confirmed dates are
+      usually published with a time of day; an entry without one is more often a
+      projection from the company's past cadence and can move by a few days.
+      ${next.timeKnown ? "This one carries a time, so it is likely confirmed."
+                       : "This one has no time attached, so treat it as provisional."}</p>`;
 }
 
 function analystSection(a) {

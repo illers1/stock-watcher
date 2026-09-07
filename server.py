@@ -406,6 +406,9 @@ def fetch_calendar(days):
                 "epsForecast": row.get("epsForecast"),
                 "fiscalQuarterEnding": row.get("fiscalQuarterEnding"),
                 "name": row.get("name"),
+                # Lets the UI corroborate a date against last year's cadence.
+                "lastYearReported": row.get("lastYearRptDt"),
+                "estimateCount": row.get("noOfEsts"),
             }
     return {
         "events": events, "daysScanned": len(dates),

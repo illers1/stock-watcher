@@ -618,3 +618,5 @@ td.by { text-align: left; }
   .room-buttons .btn { flex: 1; }
   .group td.by { display: none; }
 }
+.corroborated { color: var(--up); }
+.uncorroborated { color: var(--down); }

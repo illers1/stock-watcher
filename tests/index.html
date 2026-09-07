@@ -608,6 +608,25 @@ try { await handleGroup({ action: "get", code: "FGHJKMNPQR" }, brokenStore); }
 catch (e) { threw = true; }
 eq("a store failure propagates for the handler to report", threw, true);
 
+/* -- corroborating an upcoming date against last year's cadence -- */
+const corroborated = parseAnalysis(bundle.sources, "NVDA",
+  { date: "2026-09-20", time: "time-after-hours", epsForecast: "1.23", lastYearReported: "9/18/2025" });
+eq("a ~year gap is corroborated", corroborated.earnings.next.corroborated, true);
+check("the year gap is computed",
+      Math.abs(corroborated.earnings.next.yearGap - 367) <= 1,
+      String(corroborated.earnings.next.yearGap));
+eq("a supplied session time is recognised", corroborated.earnings.next.timeKnown, true);
+
+const offCadence = parseAnalysis(bundle.sources, "NVDA",
+  { date: "2026-09-20", time: "time-not-supplied", lastYearReported: "2/18/2025" });
+eq("a wild gap is not corroborated", offCadence.earnings.next.corroborated, false);
+eq("a missing session time is flagged", offCadence.earnings.next.timeKnown, false);
+
+const noPrior = parseAnalysis(bundle.sources, "NVDA", { date: "2026-09-20" });
+eq("no prior-year date leaves corroboration unknown", noPrior.earnings.next.corroborated, null);
+check("days away is still computed without a prior year",
+      typeof noPrior.earnings.next.daysAway === "number", "");
+
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>
   `<span class="${r.ok ? "pass" : "fail"}">${r.ok ? "PASS" : "FAIL"}</span>  ${r.name}` +

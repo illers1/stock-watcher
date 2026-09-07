@@ -298,11 +298,22 @@ export function parseAnalysis(bundle, symbol, earningsEvent = null) {
   if (earningsEvent?.date) {
     const d = new Date(earningsEvent.date + "T00:00:00");
     if (!Number.isNaN(+d)) {
+      const lastYear = earningsEvent.lastYearReported
+        ? mdy(earningsEvent.lastYearReported) : null;
+      // A date roughly a year on from the last one corroborates it; a wild gap
+      // usually means the upstream is estimating rather than reporting a
+      // confirmed date, so the UI can say so instead of implying certainty.
+      const yearGap = lastYear ? Math.round((d - lastYear) / 864e5) : null;
       next = {
         date: earningsEvent.date,
         time: earningsEvent.time ?? null,
         epsForecast: num(earningsEvent.epsForecast),
         daysAway: daysBetween(new Date(new Date().toDateString()), d),
+        lastYearReported: lastYear ? earningsEvent.lastYearReported : null,
+        yearGap,
+        corroborated: yearGap === null ? null : yearGap >= 330 && yearGap <= 400,
+        timeKnown: !!(earningsEvent.time && !/not-supplied/i.test(earningsEvent.time)),
+        estimateCount: num(earningsEvent.estimateCount),
       };
     }
   }

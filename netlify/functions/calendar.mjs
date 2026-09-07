@@ -34,6 +34,10 @@ export async function buildCalendar(days, doFetch = fetch, today = new Date()) {
         epsForecast: r.epsForecast ?? null,
         fiscalQuarterEnding: r.fiscalQuarterEnding ?? null,
         name: r.name ?? null,
+        // Kept so the UI can corroborate a date against last year's cadence:
+        // an upcoming date roughly 365 days on is a confirming signal.
+        lastYearReported: r.lastYearRptDt ?? null,
+        estimateCount: r.noOfEsts ?? null,
       };
     }
   }
