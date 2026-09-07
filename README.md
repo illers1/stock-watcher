@@ -250,6 +250,31 @@ Data comes from SEC EDGAR directly. Trackers such as browseSEC read the same
 filings; going to the source removes a dependency and keeps every row anchored
 to the document it came from.
 
+
+## Short Screen
+
+`shorts.html` reads the same data the other way: which names look weak on
+price, valuation, fundamentals, coverage and insider behaviour. Three lenses —
+Balanced, Breaking down, Overpriced — weight those differently.
+
+It is deliberately not the long rating with a minus sign in front, because
+shorting is not the mirror image of buying:
+
+- **The loss is unbounded.** A long can fall to zero; a short can lose several
+  times the stake. The page says so before it shows a single score.
+- **Crowding is a hazard, not evidence.** On the long side a heavily shorted
+  stock is potential upside. Here it is the thing that ruins the trade, so
+  short interest and days-to-cover are reported *beside* the score rather than
+  inside it — a warning averaged into a number stops warning anyone. Absent
+  short-interest data reads as "unknown, not absent", never as safe.
+- **Being right is not enough.** Borrow costs run while you wait, dividends
+  paid while short come out of your pocket, and a lender can recall the stock.
+
+The squeeze thresholds are calibrated against what the numbers normally look
+like: most large caps sit near two days to cover and under 3% of shares short.
+An early version called 2.5 days "elevated", which flagged every ordinary stock
+and so warned about none of them.
+
 ## Deploying it as a website
 
 The repository is ready to deploy — there is no build step and no dependencies

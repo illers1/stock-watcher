@@ -2,11 +2,11 @@
 import { parseAnalysis } from "./analyze.mjs";
 import { scoreAnalysis, scoreBand, FACTORS, PRESETS, DEFAULT_HORIZON_DAYS } from "./score.mjs";
 import { renderDetail } from "./detail.mjs";
+import { loadWatchlist, saveWatchlist, STORE_KEY } from "./watchlist.mjs";
 
 (function () {
   "use strict";
 
-  var STORE_KEY = "stockwatcher.symbols.v1";
   var PREF_KEY = "stockwatcher.prefs.v1";
   var ANALYSIS_KEY = "stockwatcher.analysis.v2";
   var ANALYSIS_TTL_MS = 30 * 60 * 1000;   // fundamentals move slowly
@@ -60,7 +60,7 @@ import { renderDetail } from "./detail.mjs";
       document.getElementById(id);
   });
 
-  var symbols = load(STORE_KEY, ["AAPL", "MSFT", "NVDA", "SPY"]);
+  var symbols = loadWatchlist();
   var prefs = load(PREF_KEY, {
     interval: 60, sortKey: null, sortDir: -1,
     preset: "sprint", weights: null, horizonDays: DEFAULT_HORIZON_DAYS,

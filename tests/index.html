@@ -25,6 +25,9 @@ const { tradingDays } = await import("../netlify/lib/calendar.mjs" + v);
 const { parseForm4, summariseInsiders, CODES } = await import("../static/insider-model.mjs" + v);
 const { rawDocumentName } = await import("../netlify/lib/insiders.mjs" + v);
 const { parseFilingHref, extractOwnershipXml } = await import("../netlify/lib/insider-feed.mjs" + v);
+const { scoreShort, squeezeRisk, shortBand, SHORT_FACTORS, SHORT_PRESETS } =
+  await import("../static/short-model.mjs" + v);
+const { loadWatchlist, DEFAULT_SYMBOLS } = await import("../static/watchlist.mjs" + v);
 const { toIso, longDateToIso, splitDisplayName, regulatoryDate, buildCatalysts,
         countByKind, excerptAround, KINDS, REGULATORY_HORIZON_DAYS } =
   await import("../static/catalysts-model.mjs" + v);
@@ -904,6 +907,65 @@ eq("extractOwnershipXml pulls the document out of the submission",
 eq("extractOwnershipXml returns nothing when absent",
    extractOwnershipXml("just a header, no form"), null);
 eq("extractOwnershipXml tolerates nothing", extractOwnershipXml(null), null);
+
+/* ============ short screen ============ */
+
+/* Crowding is judged on what these numbers normally look like. A first pass
+   called 2.5 days to cover "elevated", which flagged every ordinary large cap
+   and so warned about none of them. */
+const sq = (over) => squeezeRisk({
+  shortInterest: { daysToCover: 2.5, interest: 1e8 },
+  fundamentals: { sharesOut: 1e10, marketCap: 3e12 },
+  momentum: { return1m: 1 },
+  ...over,
+});
+eq("an ordinary large cap is not flagged", sq({}).level, "low");
+eq("a genuinely crowded short is high",
+   sq({ shortInterest: { daysToCover: 7, interest: 1e8 } }).level, "high");
+eq("an extreme one is severe",
+   sq({ shortInterest: { daysToCover: 12, interest: 1e8 } }).level, "severe");
+eq("a large share of stock out on loan counts too",
+   sq({ shortInterest: { daysToCover: 1, interest: 2.5e9 } }).level, "severe");
+/* Absent data is not evidence of safety. */
+eq("missing short interest is unknown, not low",
+   squeezeRisk({ fundamentals: {}, momentum: {} }).level, "unknown");
+check("and it says so",
+   squeezeRisk({ fundamentals: {}, momentum: {} }).reasons.join(" ").includes("unknown, not absent"), "");
+/* Borrow is scarcer in small companies, and a stock already running is the
+   wrong moment however good the thesis. */
+eq("a small cap is nudged up from low",
+   sq({ fundamentals: { sharesOut: 1e10, marketCap: 5e8 } }).level, "elevated");
+check("a stock rising hard is called out",
+   sq({ momentum: { return1m: 30 } }).reasons.join(" ").includes("rising into the trade"), "");
+
+/* The screen must not be the long rating inverted: crowding stays outside the
+   score, so a hazard cannot be averaged away into a middling number. */
+const shortResult = scoreShort(model, SHORT_PRESETS.balanced.weights, 30);
+check("a short score is produced", shortResult.overall !== null, String(shortResult.overall));
+eq("one entry per short factor", shortResult.factors.length, SHORT_FACTORS.length);
+check("squeeze risk is reported beside the score, not inside it",
+      !!shortResult.squeeze && !shortResult.factors.some(f => /squeeze/i.test(f.key)), "");
+check("effective weights sum to 1",
+      Math.abs(shortResult.factors.reduce((a, f) => a + f.effectiveWeight, 0) - 1) < 1e-9, "");
+eq("every preset covers every factor",
+   Object.keys(SHORT_PRESETS).filter(k =>
+     SHORT_FACTORS.some(f => !(f.key in SHORT_PRESETS[k].weights))), []);
+
+/* Falling harder should read as weaker, not stronger. */
+const falling = { ...model, momentum: { ...model.momentum, return1m: -25, return3m: -40, vsSma50: -20 } };
+const rising  = { ...model, momentum: { ...model.momentum, return1m: 20, return3m: 35, vsSma50: 15 } };
+const bd = (m) => scoreShort(m, SHORT_PRESETS.balanced.weights, 30)
+  .factors.find(f => f.key === "breakdown").score;
+check("a stock breaking down scores above one that is rising",
+      bd(falling) > bd(rising), `${bd(falling)} vs ${bd(rising)}`);
+
+eq("shortBand names a strong company a poor short", shortBand(20).label, "Strong — a poor short");
+eq("shortBand handles no data", shortBand(null).label, "No data");
+
+/* -- one watchlist definition, shared -- */
+eq("the default watchlist is not empty", DEFAULT_SYMBOLS.length > 0, true);
+check("loadWatchlist falls back to the default when nothing is stored",
+      Array.isArray(loadWatchlist()), "");
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Short Screen — Stock Watcher</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📉</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>Stock Watcher</h1>
+    <nav class="tabs" aria-label="Views">
+      <a href="index.html">Watchlist</a>
+      <a href="earnings.html">Earnings</a>
+      <a href="catalysts.html">Catalysts</a>
+      <a href="insiders.html">Insiders</a>
+      <a href="shorts.html" aria-current="page">Shorts</a>
+      <a href="group.html">Group</a>
+    </nav>
+  </div>
+  <div class="topbar-right">
+    <span id="status" class="status" role="status" aria-live="polite">Loading…</span>
+    <button id="refresh" class="btn" title="Re-screen (press R)">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <p class="lede">
+    The same data as the watchlist, read the other way: which of these look weak
+    on price, valuation, fundamentals, coverage and insider behaviour. Crowding is
+    reported separately, because a company can deserve to fall and still be a
+    ruinous short.
+  </p>
+
+  <div class="warning-box">
+    <strong>Shorting is not the mirror image of buying.</strong>
+    A long position can lose what you put in; a short can lose several times it,
+    because a price has no ceiling. You also pay to borrow the stock, owe any
+    dividend paid while you are short, and can be closed out early if the lender
+    recalls it. The screen below ranks weakness on public data — it does not say
+    a stock will fall, and it cannot tell you what a position should cost you.
+  </div>
+
+  <form class="filters" id="filters" autocomplete="off">
+    <label class="sel">
+      <span>Lens <em class="filter-why">what weakness to weight</em></span>
+      <select id="preset">
+        <option value="balanced" selected>Balanced</option>
+        <option value="momentum">Breaking down</option>
+        <option value="valuation">Overpriced</option>
+      </select>
+    </label>
+    <label class="sel">
+      <span>Universe <em class="filter-why">what to screen</em></span>
+      <select id="universe">
+        <option value="watchlist" selected>My watchlist</option>
+        <option value="custom">Watchlist + symbols I add</option>
+      </select>
+    </label>
+    <label class="sel" id="extra-wrap" hidden>
+      <span>Extra symbols <em class="filter-why">comma separated</em></span>
+      <input id="extra" type="text" placeholder="INTC, CVS, PARA" spellcheck="false">
+    </label>
+    <label class="check">
+      <input type="checkbox" id="hide-squeeze">
+      <span>Hide high squeeze risk <em class="filter-why">drop the dangerous ones</em></span>
+    </label>
+  </form>
+
+  <p id="banner" class="banner" hidden></p>
+
+  <div id="cards" class="short-cards"></div>
+
+  <p id="empty" class="empty" hidden>
+    Nothing to screen yet. Add symbols to your watchlist, or switch the universe
+    to add some here.
+  </p>
+
+  <p class="disclaimer">
+    A screen over public data, not advice, and not a forecast. Weakness on these
+    measures is common in companies that go on to recover, and the most heavily
+    shorted stocks are often the ones that rise fastest. If you act on anything
+    here, size the position on what you can afford to lose rather than on how
+    convincing the evidence looks.
+  </p>
+</main>
+
+<script type="module" src="shorts.js"></script>
+</body>
+</html>
