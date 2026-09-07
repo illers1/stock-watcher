@@ -177,6 +177,47 @@ raises a banner naming how long ago the list was last confirmed, because the
 failure mode this replaced was invisible: the list simply sat there looking
 current while nothing reached it.
 
+
+## Catalysts
+
+A third window, at `catalysts.html`. The watchlist starts from symbols you
+chose and the earnings window starts from the calendar; this starts from
+events. Everything dated and company-specific is merged into one timeline, so a
+month can be read forwards rather than a stock at a time.
+
+| Kind | Source | Confirmed? |
+| --- | --- | --- |
+| Earnings | Nasdaq earnings calendar | when the calendar carries a session time |
+| Regulatory | The company's own 8-K, via SEC full-text search | yes, but read the filing |
+| Ex-dividend | Nasdaq dividend calendar | declared by the company |
+| Split | Nasdaq split calendar | declared by the company |
+| IPO | Nasdaq IPO calendar | no, pricing dates slip routinely |
+
+Filter by kind, narrow to your watchlist, or add a symbol straight from a row.
+
+### Where FDA dates come from
+
+No free feed publishes forthcoming FDA decisions. Rather than guess, this goes
+to the companies themselves: SEC full-text search finds recent 8-Ks mentioning
+a PDUFA date or an advisory committee meeting, and the sentence around the
+mention travels back with the hit so the date can be read out of it. The
+primary source is therefore the filer's own disclosure, and every row links to
+the filing. That link is worth opening — a filing occasionally describes a
+partner's programme rather than the filer's own.
+
+Two things this deliberately gets wrong in the safe direction:
+
+- **Vague wording yields nothing.** "A PDUFA date in late September of this
+  year" produces no row at all, because inventing a day would be worse than
+  omitting the event.
+- **Past dates are rejected.** Pipeline slides list historical approvals beside
+  forthcoming ones, and a date earlier than the filing that mentions it is
+  dropped.
+
+FDA decisions are set six to twelve months ahead, so they keep their own
+one-year horizon; the window control governs the short-dated kinds. Clipping
+them to the same window as ex-dividend dates hid every one.
+
 ## Deploying it as a website
 
 The repository is ready to deploy — there is no build step and no dependencies

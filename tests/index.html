@@ -22,6 +22,9 @@ const { parseAnalysis, classifyInsiderTrade } = await import("../static/analyze.
 const { default: earningsFn, config: earningsCfg, buildEarnings } =
   await import("../netlify/functions/earnings.mjs" + v);
 const { tradingDays } = await import("../netlify/lib/calendar.mjs" + v);
+const { toIso, longDateToIso, splitDisplayName, regulatoryDate, buildCatalysts,
+        countByKind, KINDS, REGULATORY_HORIZON_DAYS } =
+  await import("../static/catalysts-model.mjs" + v);
 const { money, session, daysAway, parseRow, parseEarnings, summarise } =
   await import("../static/earnings-model.mjs" + v);
 const { default: newsFn, config: newsCfg, fetchNews } =
@@ -650,6 +653,88 @@ check("a confirmed imminent date scores above a projected one",
 check("a projected date is pulled toward neutral, not to zero",
       cf(soonProjected).score > 40 && cf(soonProjected).score < cf(soonConfirmed).score,
       String(cf(soonProjected).score));
+
+/* ============ catalysts ============ */
+
+eq("toIso passes ISO through", toIso("2026-09-10"), "2026-09-10");
+eq("toIso converts M/D/YYYY", toIso("9/10/2026"), "2026-09-10");
+eq("toIso pads single digits", toIso("9/8/2026"), "2026-09-08");
+eq("toIso rejects junk", toIso("soon"), null);
+eq("longDateToIso", longDateToIso("November 27, 2026"), "2026-11-27");
+eq("longDateToIso without a comma", longDateToIso("November 27 2026"), "2026-11-27");
+eq("longDateToIso rejects a bad month", longDateToIso("Smarch 3, 2026"), null);
+
+eq("splitDisplayName pulls the ticker",
+   splitDisplayName("Summit Therapeutics Inc.  (SMMT)  (CIK 0001599298)"),
+   { name: "Summit Therapeutics Inc.", symbol: "SMMT" });
+/* A company with several listed classes shows them together; the common stock
+   is first, and requiring a lone ticker dropped the row entirely. */
+eq("splitDisplayName takes the first of several classes",
+   splitDisplayName("Biofrontera Inc.  (BFRI, BFRIW)  (CIK 0001858685)").symbol, "BFRI");
+eq("splitDisplayName survives a missing ticker",
+   splitDisplayName("Some Private Filer  (CIK 0001)").symbol, null);
+
+/* -- reading a decision date out of a filing -- */
+eq("full future date", regulatoryDate("(PDUFA date: November 27, 2026)", "2026-08-31"), "2026-11-27");
+eq("year omitted, resolved from the filing",
+   regulatoryDate("(PDUFA November 30) and NonAdvSM", "2026-08-10"), "2026-11-30");
+eq("year omitted late in the year rolls forward",
+   regulatoryDate("PDUFA January 15 filing", "2026-11-20"), "2027-01-15");
+eq("vague wording yields nothing",
+   regulatoryDate("PDUFA date in late September of this year", "2026-08-13"), null);
+/* Pipeline slides list past approvals beside forthcoming ones. A past date must
+   be rejected outright -- and the bare-date fallback must not then backtrack
+   into "July 22, 2025" and invent a July 2nd that is nowhere in the filing. */
+eq("a past date is rejected rather than published",
+   regulatoryDate("PDUFA date July 22, 2025 RPx expansion", "2026-08-07"), null);
+eq("advisory committee wording also matches",
+   regulatoryDate("advisory committee meeting scheduled for March 4, 2027", "2026-09-01"), "2027-03-04");
+
+/* -- assembling the timeline -- */
+const catToday = new Date(2026, 8, 6);   // 6 Sep 2026
+const catBundle = {
+  dividends: [{ symbol: "aubn", companyName: "Auburn National", dividend_Ex_Date: "9/10/2026",
+                payment_Date: "9/25/2026", dividend_Rate: 0.27 }],
+  splits: [{ symbol: "KEEX", name: "Some ETF", ratio: "4 : 1", executionDate: "9/10/2026" }],
+  ipos: [{ proposedTickerSymbol: "PTT", companyName: "Siyata", expectedPriceDate: "9/08/2026",
+           proposedExchange: "NASDAQ Capital", sharesOffered: "6,112,327" }],
+  regulatory: [{ displayName: "Summit Therapeutics Inc.  (SMMT)  (CIK 1)", filedDate: "2026-09-03",
+                 query: '"PDUFA date"', url: "https://sec.gov/x",
+                 context: "the goal (PDUFA) date is November 14, 2026." }],
+};
+const catEvents = { ORCL: { date: "2026-09-10", time: "time-after-hours", epsForecast: "$1.40", name: "Oracle" } };
+const built = buildCatalysts(catBundle, catEvents, { today: catToday, days: 30 });
+
+eq("every kind is represented",
+   [...new Set(built.map(i => i.kind))].sort(), ["dividend", "earnings", "ipo", "regulatory", "split"]);
+eq("sorted by date", built.map(i => i.date), [...built.map(i => i.date)].sort());
+eq("symbols are uppercased", built.find(i => i.kind === "dividend").symbol, "AUBN");
+eq("an announced earnings time counts as confirmed",
+   built.find(i => i.kind === "earnings").confirmed, true);
+eq("IPO pricing is flagged as unconfirmed", built.find(i => i.kind === "ipo").confirmed, false);
+eq("the regulatory link is carried through",
+   built.find(i => i.kind === "regulatory").url, "https://sec.gov/x");
+
+/* An FDA date months out must survive a short window; clipping it to the
+   earnings horizon hid every one of them. */
+const reg = built.find(i => i.kind === "regulatory");
+eq("the FDA date is kept despite a 30-day window", reg.date, "2026-11-14");
+check("and it really is beyond that window", reg.daysAway > 30, String(reg.daysAway));
+check("the regulatory horizon is a year", REGULATORY_HORIZON_DAYS >= 365, "");
+
+/* Past events are never catalysts. */
+const stale = buildCatalysts({ splits: [{ symbol: "OLD", ratio: "2:1", executionDate: "1/02/2026" }] },
+                             {}, { today: catToday, days: 30 });
+eq("a past event is dropped", stale.length, 0);
+
+/* The same event arriving from two feeds must appear once. */
+const dupes = buildCatalysts({ splits: [
+  { symbol: "KEEX", ratio: "4 : 1", executionDate: "9/10/2026" },
+  { symbol: "KEEX", ratio: "4 : 1", executionDate: "9/10/2026" }] }, {}, { today: catToday, days: 30 });
+eq("duplicates are collapsed", dupes.length, 1);
+
+eq("counts by kind", countByKind(built).earnings, 1);
+eq("every kind has a label", Object.keys(KINDS).filter(k => !KINDS[k].label), []);
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

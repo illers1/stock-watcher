@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catalysts — Stock Watcher</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>⚡</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>Stock Watcher</h1>
+    <nav class="tabs" aria-label="Views">
+      <a href="index.html">Watchlist</a>
+      <a href="earnings.html">Earnings</a>
+      <a href="catalysts.html" aria-current="page">Catalysts</a>
+      <a href="group.html">Group</a>
+    </nav>
+  </div>
+  <div class="topbar-right">
+    <span id="status" class="status" role="status" aria-live="polite">Loading…</span>
+    <button id="refresh" class="btn" title="Reload catalysts (press R)">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <p class="lede">
+    Dated events that can move a single stock — FDA decisions, earnings, ex-dividend
+    dates, splits and new listings — in the order they happen, each with the company
+    it belongs to. The window governs the short-dated kinds; FDA decisions are set
+    months ahead, so those are shown up to a year out regardless.
+  </p>
+
+  <form class="filters" id="filters" autocomplete="off">
+    <label class="sel">
+      <span>Window</span>
+      <select id="window">
+        <option value="7">Next 7 days</option>
+        <option value="14">Next 14 days</option>
+        <option value="30" selected>Next 30 days</option>
+        <option value="60">Next 60 days</option>
+        <option value="90">Next 90 days</option>
+      </select>
+    </label>
+    <div class="kind-chips" id="kinds"></div>
+    <label class="check">
+      <input type="checkbox" id="watchlist-only">
+      <span>My watchlist only</span>
+    </label>
+  </form>
+
+  <p id="banner" class="banner" hidden></p>
+
+  <div id="timeline" class="timeline"></div>
+
+  <p id="empty" class="empty" hidden>
+    Nothing matches these filters. Try a longer window, or turn off the
+    watchlist filter.
+  </p>
+
+  <p class="disclaimer">
+    Earnings, dividend, split and IPO dates come from Nasdaq's calendars. Regulatory
+    dates are read out of companies' own 8-K filings via SEC full-text search, and
+    each links to the filing it came from — worth opening, because a filing sometimes
+    describes a partner's programme rather than the filer's own. Dated events only:
+    anything without a date is left out rather than guessed at.
+  </p>
+</main>
+
+<script type="module" src="catalysts.js"></script>
+</body>
+</html>

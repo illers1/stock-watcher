@@ -537,6 +537,136 @@ def group_action(body):
         return {"error": "Unknown action", "symbols": None}
 
 
+
+# --------------------------------------------------------------------------
+# Catalysts. Mirrors netlify/lib/catalysts.mjs: fetch and trim only, with
+# static/catalysts-model.mjs doing every bit of interpretation.
+# --------------------------------------------------------------------------
+
+EDGAR_FTS = "https://efts.sec.gov/LATEST/search-index"
+SEC_UA = "StockWatcher/1.0 (personal research tool) contact@example.com"
+DIVIDEND_DAYS = 20
+MAX_FILINGS = 10
+REG_QUERIES = ('"PDUFA date"', '"advisory committee meeting"')
+
+
+def raw_json_ua(url, ua, timeout=10):
+    req = urllib.request.Request(url, headers={"User-Agent": ua, "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
+
+
+def extract_context(html, term="PDUFA", radius=260):
+    """The sentence around the first mention, which is where the date sits."""
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"&#?\w+;", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    i = text.upper().find(term.upper())
+    if i == -1:
+        return text[:radius * 2]
+    return text[max(0, i - radius):i + radius]
+
+
+def fetch_catalysts(days):
+    today = datetime.date.today()
+
+    def dividends():
+        dates = [d.isoformat() for d in
+                 (today + datetime.timedelta(days=n) for n in range(min(days, DIVIDEND_DAYS)))
+                 if d.weekday() < 5]
+
+        def one(date_str):
+            try:
+                data = raw_json_ua("%s/calendar/dividends?date=%s" % (NASDAQ, date_str), UA, 8)
+                rows = ((data.get("data") or {}).get("calendar") or {}).get("rows") or []
+                return [dict(r, _date=date_str) for r in rows]
+            except Exception:
+                return []
+        out = []
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            for rows in pool.map(one, dates):
+                out.extend(rows)
+        return out
+
+    def splits():
+        try:
+            return (raw_json_ua("%s/calendar/splits" % NASDAQ, UA, 8).get("data") or {}).get("rows") or []
+        except Exception:
+            return []
+
+    def ipos():
+        out = []
+        for n in (0, 1):
+            month = (today.replace(day=1) + datetime.timedelta(days=32 * n)).strftime("%Y-%m")
+            try:
+                data = raw_json_ua("%s/ipo/calendar?date=%s" % (NASDAQ, month), UA, 8)
+                out.extend(((data.get("data") or {}).get("upcoming") or {})
+                           .get("upcomingTable", {}).get("rows") or [])
+            except Exception:
+                pass
+        return out
+
+    def regulatory():
+        end = today.isoformat()
+        start = (today - datetime.timedelta(days=120)).isoformat()
+        hits = []
+        for q in REG_QUERIES:
+            url = "%s?q=%s&forms=8-K&startdt=%s&enddt=%s" % (
+                EDGAR_FTS, urllib.parse.quote(q), start, end)
+            try:
+                body = raw_json_ua(url, SEC_UA, 12)
+                for h in ((body.get("hits") or {}).get("hits") or []):
+                    h["_query"] = q
+                    hits.append(h)
+            except Exception:
+                pass
+        hits.sort(key=lambda h: (h.get("_source") or {}).get("file_date") or "", reverse=True)
+
+        picked, seen = [], set()
+        for h in hits:  # newest first, one filing per company
+            ciks = (h.get("_source") or {}).get("ciks") or []
+            if not ciks or ciks[0] in seen:
+                continue
+            seen.add(ciks[0])
+            picked.append(h)
+            if len(picked) >= MAX_FILINGS:
+                break
+
+        def context_for(h):
+            src = h.get("_source") or {}
+            parts = str(h.get("_id") or "").split(":")
+            cik = (src.get("ciks") or [None])[0]
+            url = None
+            context = ""
+            if len(parts) == 2 and cik:
+                url = "https://www.sec.gov/Archives/edgar/data/%d/%s/%s" % (
+                    int(cik), parts[0].replace("-", ""), parts[1])
+                try:
+                    req = urllib.request.Request(url, headers={"User-Agent": SEC_UA})
+                    with urllib.request.urlopen(req, timeout=12) as resp:
+                        html = resp.read().decode("utf-8", "replace")
+                    term = "PDUFA" if "PDUFA" in h["_query"] else "advisory committee"
+                    context = extract_context(html, term)
+                except Exception:
+                    context = ""
+            return {
+                "displayName": (src.get("display_names") or [None])[0],
+                "filedDate": src.get("file_date"),
+                "query": h["_query"],
+                "url": url,
+                "context": context,
+            }
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            return list(pool.map(context_for, picked))
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {k: pool.submit(f) for k, f in
+                   (("dividends", dividends), ("splits", splits),
+                    ("ipos", ipos), ("regulatory", regulatory))}
+        return {k: fut.result() for k, fut in futures.items()}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=STATIC_DIR, **kwargs)
@@ -636,6 +766,20 @@ class Handler(SimpleHTTPRequestHandler):
             result = fetch_earnings(days)
             result.update({"asOf": time.time(), "error": None})
             return self.send_json(result)
+
+        if parsed.path == "/api/catalysts":
+            try:
+                days = int((params.get("days") or ["45"])[0])
+            except ValueError:
+                days = 45
+            days = max(1, min(90, days))
+            try:
+                sources = fetch_catalysts(days)
+                return self.send_json({"sources": sources, "days": days,
+                                       "asOf": time.time(), "error": None})
+            except Exception as exc:
+                return self.send_json({"sources": {}, "days": days, "asOf": None,
+                                       "error": "Catalysts failed (%s)" % type(exc).__name__})
 
         if parsed.path == "/":
             self.path = "/index.html"
