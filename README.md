@@ -307,6 +307,18 @@ risk: 18% of its shares were already short and it was up 38% in a month. The
 cheap screen finds weak companies; the full one asks whether shorting them is
 survivable.
 
+## Filter explanations
+
+Every window with filters carries a collapsible **What these filters do** panel
+beneath the controls, from `static/filter-guide.mjs`. It says what each filter
+does, what the individual options mean, and where a choice biases the result
+rather than merely narrowing it — the Shorts page's "Examine first" being the
+clearest case, since it decides which slice of thousands of matches actually
+gets looked at.
+
+A test walks each page's filter form and fails if a control has no entry, so a
+filter added later cannot quietly go undocumented.
+
 ## Deploying it as a website
 
 The repository is ready to deploy — there is no build step and no dependencies

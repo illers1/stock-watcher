@@ -9,6 +9,7 @@
    localStorage key, so adding from here shows up there immediately. */
 
 import { buildCatalysts, countByKind, KINDS } from "./catalysts-model.mjs";
+import { mountFilterGuide, CATALYST_FILTERS } from "./filter-guide.mjs";
 
 (function () {
   "use strict";
@@ -228,6 +229,7 @@ import { buildCatalysts, countByKind, KINDS } from "./catalysts-model.mjs";
 
   /* ---------------- boot ---------------- */
 
+  mountFilterGuide(CATALYST_FILTERS);
   els.window.value = String(view.days);
   els.watchlistOnly.checked = !!view.watchlistOnly;
   renderChips();

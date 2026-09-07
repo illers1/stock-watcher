@@ -13,6 +13,7 @@ import { parseEarnings, summarise } from "./earnings-model.mjs";
 import { parseNewsFeed } from "./news-model.mjs";
 import { scoreAnalysis, scoreBand, FACTORS, PRESETS, DEFAULT_HORIZON_DAYS } from "./score.mjs";
 import { renderDetail } from "./detail.mjs";
+import { mountFilterGuide, EARNINGS_FILTERS } from "./filter-guide.mjs";
 
 (function () {
   "use strict";
@@ -708,6 +709,7 @@ import { renderDetail } from "./detail.mjs";
 
   /* ---------------- boot ---------------- */
 
+  mountFilterGuide(EARNINGS_FILTERS);
   els.window.value = String(filters.days);
   els.session.value = filters.session || "";
   els.mincap.value = String(filters.minCap);

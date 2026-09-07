@@ -8,6 +8,7 @@
    localStorage key. */
 
 import { parseForm4, CODES } from "./insider-model.mjs";
+import { mountFilterGuide, INSIDER_FILTERS } from "./filter-guide.mjs";
 
 (function () {
   "use strict";
@@ -221,6 +222,7 @@ import { parseForm4, CODES } from "./insider-model.mjs";
 
   /* ---------------- boot ---------------- */
 
+  mountFilterGuide(INSIDER_FILTERS);
   els.mode.value = view.mode;
   els.minValue.value = String(view.minValue);
   els.ticker.value = view.ticker || "";

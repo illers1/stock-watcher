@@ -12,6 +12,7 @@ import { parseAnalysis } from "./analyze.mjs";
 import { scoreShort, shortBand, SHORT_PRESETS, SQUEEZE_TONE } from "./short-model.mjs";
 import { loadWatchlist } from "./watchlist.mjs";
 import { rankCandidates, SECTORS } from "./screen-model.mjs";
+import { mountFilterGuide, SHORT_FILTERS } from "./filter-guide.mjs";
 
 (function () {
   "use strict";
@@ -346,6 +347,7 @@ import { rankCandidates, SECTORS } from "./screen-model.mjs";
 
   /* ---------------- boot ---------------- */
 
+  mountFilterGuide(SHORT_FILTERS);
   els.sector.innerHTML = '<option value="any">All sectors</option>' +
     SECTORS.map(function (s2) { return '<option value="' + esc(s2) + '">' + esc(s2) + '</option>'; }).join("");
   els.preset.value = view.preset;

@@ -28,6 +28,8 @@ const { parseFilingHref, extractOwnershipXml } = await import("../netlify/lib/in
 const { scoreShort, squeezeRisk, shortBand, SHORT_FACTORS, SHORT_PRESETS } =
   await import("../static/short-model.mjs" + v);
 const { loadWatchlist, DEFAULT_SYMBOLS } = await import("../static/watchlist.mjs" + v);
+const { SHORT_FILTERS, INSIDER_FILTERS, CATALYST_FILTERS, EARNINGS_FILTERS, renderFilterGuide } =
+  await import("../static/filter-guide.mjs" + v);
 const { buildCandidate, weaknessScore, rankCandidates, SECTORS } =
   await import("../static/screen-model.mjs" + v);
 const { filterUniverse, CAP_BANDS, ORDERINGS } = await import("../netlify/lib/screener.mjs" + v);
@@ -1034,6 +1036,59 @@ eq("a name with too little data is dropped", ranked.map(r => r.symbol), ["FULL"]
 check("completeness is reported", ranked[0].completeness > 0.5, String(ranked[0].completeness));
 eq("an empty screen ranks to nothing", rankCandidates([], {}), []);
 check("the sector list is populated", SECTORS.length > 5, String(SECTORS.length));
+
+/* ============ filter explanations ============ */
+
+const GUIDES = {
+  "shorts.html": SHORT_FILTERS,
+  "insiders.html": INSIDER_FILTERS,
+  "catalysts.html": CATALYST_FILTERS,
+  "earnings.html": EARNINGS_FILTERS,
+};
+
+/* Every control in a page's filter form must be explained. Without this, a
+   filter added later just quietly goes undocumented. Only the filter form is
+   checked — the rating drawer carries its own copy. */
+for (const [page, guide] of Object.entries(GUIDES)) {
+  const html = await (await fetch("../static/" + page)).text();
+  const form = /<form[^>]*id="filters"[\s\S]*?<\/form>/.exec(html)?.[0] ?? "";
+  check(`${page} has a filter form`, form.length > 0, "");
+
+  const labels = [];
+  for (const m of form.matchAll(/<label[\s\S]*?<\/label>/g)) {
+    if (!/<(select|input)[^>]*id="/.test(m[0])) continue;
+    const name = /<span>([\s\S]*?)(?:<em|<\/span>)/.exec(m[0]);
+    if (name) labels.push(name[1].replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim());
+  }
+  check(`${page} exposes filters to check`, labels.length > 0, String(labels.length));
+
+  const explained = guide.map((e) => e.name.toLowerCase());
+  const missing = labels.filter((l) => !explained.includes(l.toLowerCase()));
+  eq(`${page}: every filter is explained`, missing, []);
+}
+
+/* The chips on the catalysts page are its kind filter, explained in its legend
+   rather than as a form control, so the guide names it separately. */
+eq("the catalysts guide covers the kind chips",
+   CATALYST_FILTERS.some((e) => /kind/i.test(e.name)), true);
+
+/* Explanations have to say something. */
+for (const [page, guide] of Object.entries(GUIDES)) {
+  eq(`${page}: every entry has a name`, guide.filter((e) => !e.name).length, 0);
+  check(`${page}: every entry actually explains itself`,
+        guide.every((e) => (e.what ?? "").length > 40),
+        guide.filter((e) => (e.what ?? "").length <= 40).map((e) => e.name).join(", "));
+  check(`${page}: listed options are described`,
+        guide.every((e) => !e.options || e.options.every(([l, m2]) => l && m2 && m2.length > 10)), "");
+}
+
+/* The rendered markup must escape what it is given. */
+/* The closing tag is written "<\/script>": inside an HTML script element a
+   literal one ends the block, whatever the JavaScript around it thinks. */
+const nasty = renderFilterGuide([{ name: "<script>x<\/script>", what: "a & b \"quoted\" explanation here" }]);
+check("guide output escapes markup", !nasty.includes("<script>x"), "");
+check("guide output escapes ampersands", nasty.includes("a &amp; b"), "");
+check("guide renders a details block", nasty.startsWith("\n    <details") || nasty.trim().startsWith("<details"), "");
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>
