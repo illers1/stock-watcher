@@ -11,6 +11,7 @@
 import { parseAnalysis } from "./analyze.mjs";
 import { scoreShort, shortBand, SHORT_PRESETS, SQUEEZE_TONE } from "./short-model.mjs";
 import { loadWatchlist } from "./watchlist.mjs";
+import { rankCandidates, SECTORS } from "./screen-model.mjs";
 
 (function () {
   "use strict";
@@ -23,12 +24,17 @@ import { loadWatchlist } from "./watchlist.mjs";
 
   var els = {};
   ["status", "refresh", "preset", "universe", "extra", "extra-wrap",
-   "hide-squeeze", "cards", "empty", "banner"].forEach(function (id) {
+   "hide-squeeze", "cards", "empty", "banner", "cap", "sector", "order",
+   "cap-wrap", "sector-wrap", "order-wrap", "coverage",
+   "screen-wrap", "screen-rows"].forEach(function (id) {
     els[id.replace(/-(\w)/g, function (m, c) { return c.toUpperCase(); })] =
       document.getElementById(id);
   });
 
-  var view = load(VIEW_KEY, { preset: "balanced", universe: "watchlist", extra: "", hideSqueeze: false });
+  var view = load(VIEW_KEY, { preset: "balanced", universe: "market", extra: "",
+                              hideSqueeze: false, cap: "smallmid", sector: "any", order: "decliners" });
+  var candidates = [];       // ranked first-pass results, market mode only
+  var screening = false;
   var symbols = loadWatchlist();
   var prefs = load(PREF_KEY, { horizonDays: 30 });
   var cache = load(ANALYSIS_KEY, {});
@@ -80,7 +86,10 @@ import { loadWatchlist } from "./watchlist.mjs";
     els.status.className = "status" + (err ? " err" : "");
   }
 
+  var analysed = [];   // symbols promoted out of the screen for a full look
+
   function universe() {
+    if (view.universe === "market") return analysed.slice();
     var list = symbols.slice();
     if (view.universe === "custom") {
       String(view.extra || "").split(",").forEach(function (raw) {
@@ -138,6 +147,66 @@ import { loadWatchlist } from "./watchlist.mjs";
         setStatus(universe().length + " screened · " +
           new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
       });
+  }
+
+  /* ---------------- market screen ---------------- */
+
+  function runMarketScreen() {
+    if (screening) return Promise.resolve();
+    screening = true;
+    setStatus("Screening the market…");
+    els.banner.hidden = true;
+
+    var qs = new URLSearchParams({
+      cap: view.cap || "smallmid",
+      sector: view.sector || "any",
+      order: view.order || "decliners",
+    });
+    return fetch("/api/screen?" + qs)
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.error) { els.banner.textContent = d.error; els.banner.hidden = false; }
+        candidates = rankCandidates(d.rows, d.quotes);
+        renderCoverage(d);
+        render();
+        setStatus(candidates.length + " ranked · " +
+          new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+      })
+      .catch(function (err) { setStatus("Screen failed — " + err.message, true); })
+      .then(function () { screening = false; });
+  }
+
+  /* Say how much of the market was actually looked at. A screen that examines
+     a slice and reports it as "the market" is worse than one that admits it. */
+  function renderCoverage(d) {
+    if (!d || d.matched === undefined) { els.coverage.hidden = true; return; }
+    els.coverage.innerHTML =
+      "<strong>" + d.matched.toLocaleString() + "</strong> of " +
+      d.universeSize.toLocaleString() + " US-listed stocks match these filters. " +
+      "Fundamentals were pulled for <strong>" + d.examined + "</strong> of them, taken in the order " +
+      "<em>" + esc((d.orderLabel || "").toLowerCase()) + "</em>" +
+      (d.matched > d.examined
+        ? " — so this ranks that slice, not every match. Narrow the filters to cover more of what you care about."
+        : " — every match was examined.");
+    els.coverage.hidden = false;
+  }
+
+  function screenRow(c) {
+    var flags = "";
+    if (c.alreadyFallen) flags += '<span class="flag" title="Most of the fall may already have happened">already down</span>';
+    if (c.lossMaking) flags += '<span class="flag">loss-making</span>';
+    return '<tr>' +
+      '<td class="sym"><span class="sym-code">' + esc(c.symbol) + '</span>' +
+        '<span class="sym-name">' + esc(c.name || "") + '</span></td>' +
+      '<td class="sub">' + esc(c.sector || "—") + flags + '</td>' +
+      '<td class="num">' + (c.price === null ? "—" : c.price.toFixed(2)) + '</td>' +
+      '<td class="num sub">' + usd(c.marketCap) + '</td>' +
+      '<td class="num down">' + (c.offHigh === null ? "—" : pct(c.offHigh, 0)) + '</td>' +
+      '<td class="num ' + (c.netMargin !== null && c.netMargin < 0 ? "down" : "") + '">' +
+        (c.netMargin === null ? "—" : pct(c.netMargin, 0)) + '</td>' +
+      '<td class="num"><span class="score-badge tone-down">' + Math.round(c.weakness) + '</span></td>' +
+      '<td class="act"><button class="btn btn-small" data-analyse="' + esc(c.symbol) + '">Analyse</button></td>' +
+      '</tr>';
   }
 
   /* ---------------- rendering ---------------- */
@@ -203,9 +272,15 @@ import { loadWatchlist } from "./watchlist.mjs";
   }
 
   function render() {
+    var marketMode = view.universe === "market";
+    els.screenWrap.hidden = !marketMode || !candidates.length;
+    if (marketMode) {
+      els.screenRows.innerHTML = candidates.slice(0, 40).map(screenRow).join("");
+    }
+    // In market mode the cards hold whatever has been fully analysed so far.
     var rows = scored();
-    els.empty.hidden = rows.length > 0;
     els.cards.innerHTML = rows.map(card).join("");
+    els.empty.hidden = marketMode ? candidates.length > 0 : rows.length > 0;
   }
 
   /* ---------------- events ---------------- */
@@ -213,11 +288,40 @@ import { loadWatchlist } from "./watchlist.mjs";
   els.preset.addEventListener("change", function () {
     view.preset = els.preset.value; save(VIEW_KEY, view); render();
   });
+  function syncControls() {
+    els.extraWrap.hidden = view.universe !== "custom";
+    var market = view.universe === "market";
+    [els.capWrap, els.sectorWrap, els.orderWrap].forEach(function (el) { el.hidden = !market; });
+    els.coverage.hidden = !market || !candidates.length;
+    els.screenWrap.hidden = !market || !candidates.length;
+  }
+
   els.universe.addEventListener("change", function () {
     view.universe = els.universe.value;
-    els.extraWrap.hidden = view.universe !== "custom";
     save(VIEW_KEY, view);
-    screenAll();
+    syncControls();
+    if (view.universe === "market") runMarketScreen(); else screenAll();
+  });
+
+  ["cap", "sector", "order"].forEach(function (key) {
+    els[key].addEventListener("change", function () {
+      view[key] = els[key].value;
+      save(VIEW_KEY, view);
+      runMarketScreen();
+    });
+  });
+
+  els.screenRows.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-analyse]");
+    if (!btn) return;
+    var sym = btn.dataset.analyse;
+    if (analysed.indexOf(sym) === -1) analysed.unshift(sym);
+    btn.textContent = "…";
+    ensureAnalysis(sym).then(function () {
+      render();
+      var card = els.cards.querySelector(".short-card");
+      if (card && card.scrollIntoView) card.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   });
   var extraTimer = null;
   els.extra.addEventListener("input", function () {
@@ -230,7 +334,8 @@ import { loadWatchlist } from "./watchlist.mjs";
     view.hideSqueeze = els.hideSqueeze.checked; save(VIEW_KEY, view); render();
   });
   els.refresh.addEventListener("click", function () {
-    cache = {}; models = {}; save(ANALYSIS_KEY, cache); screenAll();
+    cache = {}; models = {}; save(ANALYSIS_KEY, cache);
+    if (view.universe === "market") runMarketScreen(); else screenAll();
   });
   document.addEventListener("keydown", function (e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -241,11 +346,16 @@ import { loadWatchlist } from "./watchlist.mjs";
 
   /* ---------------- boot ---------------- */
 
+  els.sector.innerHTML = '<option value="any">All sectors</option>' +
+    SECTORS.map(function (s2) { return '<option value="' + esc(s2) + '">' + esc(s2) + '</option>'; }).join("");
   els.preset.value = view.preset;
   els.universe.value = view.universe;
+  els.cap.value = view.cap || "smallmid";
+  els.sector.value = view.sector || "any";
+  els.order.value = view.order || "decliners";
   els.extra.value = view.extra || "";
-  els.extraWrap.hidden = view.universe !== "custom";
   els.hideSqueeze.checked = !!view.hideSqueeze;
+  syncControls();
   render();
-  screenAll();
+  if (view.universe === "market") runMarketScreen(); else screenAll();
 })();

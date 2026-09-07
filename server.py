@@ -831,6 +831,120 @@ def fetch_insider_feed(limit):
     return {"filings": filings, "asOf": datetime.datetime.utcnow().isoformat() + "Z"}
 
 
+
+# --------------------------------------------------------------------------
+# Market-wide screening. Mirrors netlify/lib/screener.mjs: fetch, filter on the
+# cheap fields, enrich a bounded slice. Ranking lives in
+# static/screen-model.mjs so both runtimes agree on it.
+# --------------------------------------------------------------------------
+
+SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks"
+SCREEN_BATCH = 70
+SCREEN_MAX_ENRICHED = 280
+
+CAP_BANDS = {
+    "any": (0, float("inf")),
+    "mega": (200e9, float("inf")),
+    "large": (10e9, 200e9),
+    "mid": (2e9, 10e9),
+    "small": (300e6, 2e9),
+    "smallmid": (300e6, 10e9),
+}
+
+
+def screen_money(v):
+    if v is None:
+        return None
+    t = re.sub(r"[$,%\s]", "", str(v))
+    t = re.sub(r"^\((.*)\)$", r"-\1", t)
+    if not t or t.upper() == "N/A":
+        return None
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def fetch_universe():
+    data = raw_json("%s?tableonly=true&limit=8000&offset=0&download=true" % SCREENER_URL, timeout=25)
+    rows = (data.get("data") or {}).get("rows") or []
+    out = []
+    for r in rows:
+        sym = str(r.get("symbol") or "").upper()
+        if not sym:
+            continue
+        out.append({
+            "symbol": sym, "name": r.get("name"),
+            "price": screen_money(r.get("lastsale")),
+            "changePercent": screen_money(r.get("pctchange")),
+            "marketCap": screen_money(r.get("marketCap")),
+            "volume": screen_money(r.get("volume")),
+            "sector": r.get("sector") or None,
+            "industry": r.get("industry") or None,
+            "country": r.get("country") or None,
+        })
+    return out
+
+
+def run_screen(opts):
+    universe = fetch_universe()
+    lo, hi = CAP_BANDS.get(opts["cap"], CAP_BANDS["any"])
+    sector = opts["sector"].lower() if opts["sector"] and opts["sector"] != "any" else None
+
+    matched = []
+    for r in universe:
+        cap = r["marketCap"]
+        if cap is None or cap < lo or cap > hi:
+            continue
+        if r["price"] is None or r["price"] < opts["minPrice"]:
+            continue
+        if r["volume"] is not None and r["volume"] < opts["minVolume"]:
+            continue
+        if sector and str(r.get("sector") or "").lower() != sector:
+            continue
+        if re.search(r"[.^]", r["symbol"]):  # warrants, units, preference lines
+            continue
+        matched.append(r)
+
+    orderings = {
+        "decliners": lambda r: r["changePercent"] if r["changePercent"] is not None else 0,
+        "smallest": lambda r: r["marketCap"] or 0,
+        "largest": lambda r: -(r["marketCap"] or 0),
+        "liquid": lambda r: -(r["volume"] or 0),
+    }
+    labels = {"decliners": "Biggest fallers today", "smallest": "Smallest first",
+              "largest": "Largest first", "liquid": "Most traded first"}
+    key = orderings.get(opts["order"], orderings["decliners"])
+    ordered = sorted(matched, key=key)
+    budget = max(SCREEN_BATCH, min(SCREEN_MAX_ENRICHED, opts["limit"]))
+    sliced = ordered[:budget]
+
+    quotes = {}
+    for i in range(0, len(sliced), SCREEN_BATCH):
+        batch = [r["symbol"] for r in sliced[i:i + SCREEN_BATCH]]
+        qs = urllib.parse.urlencode({
+            "symbols": "|".join(batch), "requestMethod": "itv", "noform": "1",
+            "partnerId": "2", "fund": "1", "exthrs": "1", "output": "json", "events": "1",
+        })
+        try:
+            body = raw_json(QUOTE_URL + "?" + qs, timeout=20)
+        except Exception:
+            continue
+        recs = (body.get("FormattedQuoteResult") or {}).get("FormattedQuote") or []
+        if isinstance(recs, dict):
+            recs = [recs]
+        for rec in recs:
+            sym = str(rec.get("symbol") or "").upper()
+            if sym and str(rec.get("code")) == "0":
+                quotes[sym] = rec
+
+    return {
+        "universeSize": len(universe), "matched": len(matched), "examined": len(sliced),
+        "order": opts["order"], "orderLabel": labels.get(opts["order"], ""),
+        "rows": sliced, "quotes": quotes,
+    }
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=STATIC_DIR, **kwargs)
@@ -957,6 +1071,30 @@ class Handler(SimpleHTTPRequestHandler):
             feed = fetch_insider_feed(max(1, min(60, limit)))
             feed["error"] = None
             return self.send_json(feed)
+
+        if parsed.path == "/api/screen":
+            def as_int(name, default):
+                try:
+                    return int((params.get(name) or [str(default)])[0])
+                except ValueError:
+                    return default
+            cap = (params.get("cap") or ["smallmid"])[0]
+            order = (params.get("order") or ["decliners"])[0]
+            opts = {
+                "cap": cap if cap in CAP_BANDS else "smallmid",
+                "sector": (params.get("sector") or ["any"])[0],
+                "order": order if order in ("decliners", "smallest", "largest", "liquid") else "decliners",
+                "minPrice": max(0, as_int("minPrice", 5)),
+                "minVolume": max(0, as_int("minVolume", 300000)),
+                "limit": min(SCREEN_MAX_ENRICHED, max(70, as_int("limit", SCREEN_MAX_ENRICHED))),
+            }
+            try:
+                result = run_screen(opts)
+                result.update({"filters": opts, "asOf": time.time(), "error": None})
+                return self.send_json(result)
+            except Exception as exc:
+                return self.send_json({"rows": [], "quotes": {}, "filters": opts,
+                                       "asOf": None, "error": "Screen failed (%s)" % type(exc).__name__})
 
         if parsed.path == "/":
             self.path = "/index.html"

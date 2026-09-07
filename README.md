@@ -275,6 +275,38 @@ like: most large caps sit near two days to cover and under 3% of shares short.
 An early version called 2.5 days "elevated", which flagged every ordinary stock
 and so warned about none of them.
 
+### Screening the whole market
+
+A watchlist of mega caps is a poor hunting ground for shorts, so the page also
+screens every US-listed stock. The full analysis costs about ten requests a
+symbol and cannot be pointed at seven thousand companies, so it runs as a
+funnel:
+
+1. One request returns the whole market with sector, size, price and volume.
+2. That is filtered on the cheap fields — size, liquidity, price, sector —
+   which is what decides whether a short is *practical* rather than merely
+   justified. Sub-$5 prices, thin volume and warrant lines are excluded.
+3. A bounded slice of what survives is enriched through the batched quote feed,
+   seventy symbols per request, and ranked on structural weakness.
+4. Only the names worth it get the full analysis, one click each.
+
+The page states how many stocks matched, how many were actually examined, and
+in what order the slice was taken. A screen that quietly looks at the first few
+hundred rows and calls the result "the market" is worse than one that admits
+where it stopped.
+
+The first-pass ranking peaks part-way down rather than at the bottom. Rewarding
+whatever has fallen furthest puts a company already down 95% above one 30% off
+its high and still sliding, which is backwards — the first has had its move,
+and is exactly where borrow is scarcest and squeezes sharpest. Names already
+down more than 60% are flagged rather than promoted.
+
+The two stages disagreeing is the point. SBET topped the first pass on
+weakness, then the full analysis returned a middling score with high squeeze
+risk: 18% of its shares were already short and it was up 38% in a month. The
+cheap screen finds weak companies; the full one asks whether shorting them is
+survivable.
+
 ## Deploying it as a website
 
 The repository is ready to deploy — there is no build step and no dependencies

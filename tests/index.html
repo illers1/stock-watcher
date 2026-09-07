@@ -28,6 +28,9 @@ const { parseFilingHref, extractOwnershipXml } = await import("../netlify/lib/in
 const { scoreShort, squeezeRisk, shortBand, SHORT_FACTORS, SHORT_PRESETS } =
   await import("../static/short-model.mjs" + v);
 const { loadWatchlist, DEFAULT_SYMBOLS } = await import("../static/watchlist.mjs" + v);
+const { buildCandidate, weaknessScore, rankCandidates, SECTORS } =
+  await import("../static/screen-model.mjs" + v);
+const { filterUniverse, CAP_BANDS, ORDERINGS } = await import("../netlify/lib/screener.mjs" + v);
 const { toIso, longDateToIso, splitDisplayName, regulatoryDate, buildCatalysts,
         countByKind, excerptAround, KINDS, REGULATORY_HORIZON_DAYS } =
   await import("../static/catalysts-model.mjs" + v);
@@ -966,6 +969,71 @@ eq("shortBand handles no data", shortBand(null).label, "No data");
 eq("the default watchlist is not empty", DEFAULT_SYMBOLS.length > 0, true);
 check("loadWatchlist falls back to the default when nothing is stored",
       Array.isArray(loadWatchlist()), "");
+
+/* ============ market-wide screening ============ */
+
+const uni = [
+  { symbol: "BIG",   marketCap: 500e9, price: 200, volume: 5e6 },
+  { symbol: "MID",   marketCap: 5e9,   price: 40,  volume: 1e6, sector: "Technology" },
+  { symbol: "SMALL", marketCap: 800e6, price: 12,  volume: 900e3, sector: "Health Care" },
+  { symbol: "PENNY", marketCap: 400e6, price: 2,   volume: 4e6 },
+  { symbol: "THIN",  marketCap: 3e9,   price: 30,  volume: 1000 },
+  { symbol: "BRK.A", marketCap: 4e9,   price: 90,  volume: 2e6 },
+];
+
+/* Size and liquidity are not preferences here: below them the borrow is scarce
+   or costly and the position cannot be closed without moving the price. */
+eq("a cap band is applied",
+   filterUniverse(uni, { cap: "smallmid" }).map(r => r.symbol).sort(), ["MID", "SMALL"]);
+eq("sub-$5 stocks are excluded",
+   filterUniverse(uni, { cap: "any" }).map(r => r.symbol).includes("PENNY"), false);
+eq("illiquid names are excluded",
+   filterUniverse(uni, { cap: "any" }).map(r => r.symbol).includes("THIN"), false);
+eq("suffixed lines (warrants, units, preference) are excluded",
+   filterUniverse(uni, { cap: "any" }).map(r => r.symbol).includes("BRK.A"), false);
+eq("a sector filter narrows further",
+   filterUniverse(uni, { cap: "any", sector: "Health Care" }).map(r => r.symbol), ["SMALL"]);
+eq("every cap band has a label", Object.values(CAP_BANDS).filter(b => !b.label), []);
+eq("every ordering has a label and a sort",
+   Object.values(ORDERINGS).filter(o => !o.label || typeof o.sort !== "function"), []);
+
+/* -- first-pass weakness -- */
+const quoteFor = (over) => ({
+  last: "50", yrhiprice: "100", yrloprice: "40", pe: "30", fpe: "25", psales: "6",
+  ROETTM: "5%", NETPROFTTM: "2%", GROSMGNTTM: "40%", DEBTEQTYQ: "120%", ...over,
+});
+const cand = buildCandidate({ symbol: "TEST", sector: "Technology" }, quoteFor({}));
+eq("range position is computed", Math.round(cand.rangePosition), 17);
+eq("distance below the high is computed", Math.round(cand.offHigh), -50);
+check("fundamentals are parsed", cand.netMargin === 2 && cand.debtToEquity === 120, "");
+
+/* A wreck must not outrank a break in progress. Rewarding whatever has fallen
+   furthest ranks a company already down 95% above one 30% off its high and
+   still sliding, which is backwards: the first has had its move, and is where
+   borrow is scarcest and squeezes sharpest. */
+const wreck = weaknessScore(buildCandidate({ symbol: "W" },
+  quoteFor({ last: "4", yrhiprice: "100", yrloprice: "3" })));
+const breaking = weaknessScore(buildCandidate({ symbol: "B" },
+  quoteFor({ last: "68", yrhiprice: "100", yrloprice: "60" })));
+check("a break in progress outranks a wreck",
+      breaking.score > wreck.score, `${breaking.score} vs ${wreck.score}`);
+eq("a collapsed price is flagged rather than scored", wreck.alreadyFallen, true);
+eq("and a moderate fall is not", breaking.alreadyFallen, false);
+
+const losing = weaknessScore(buildCandidate({ symbol: "L" }, quoteFor({ NETPROFTTM: "-30%" })));
+eq("loss-making is flagged", losing.lossMaking, true);
+check("and it scores weaker than a profitable peer",
+      losing.score > weaknessScore(buildCandidate({ symbol: "P" },
+        quoteFor({ NETPROFTTM: "22%" }))).score, "");
+
+/* Ranking must not put a company with almost nothing reported at the top. */
+const ranked = rankCandidates(
+  [{ symbol: "FULL" }, { symbol: "BARE" }],
+  { FULL: quoteFor({}), BARE: { last: "10" } });
+eq("a name with too little data is dropped", ranked.map(r => r.symbol), ["FULL"]);
+check("completeness is reported", ranked[0].completeness > 0.5, String(ranked[0].completeness));
+eq("an empty screen ranks to nothing", rankCandidates([], {}), []);
+check("the sector list is populated", SECTORS.length > 5, String(SECTORS.length));
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

@@ -820,3 +820,17 @@ table.insiders tr.routine { opacity: .62; }
   .short-cards { grid-template-columns: 1fr; }
   .short-card .factor > summary { grid-template-columns: 104px 1fr 30px 34px; }
 }
+.coverage {
+  font-size: 12.5px; color: var(--muted); line-height: 1.6;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 11px 14px; margin: 0 0 14px; max-width: 84ch;
+}
+.coverage strong { color: var(--text); }
+.screen-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.screen-table th.col-num { text-align: right; }
+.flag {
+  display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .03em; color: var(--muted);
+  border: 1px solid var(--border-strong); border-radius: 5px; padding: 1px 5px;
+}
+.market-only[hidden] { display: none !important; }

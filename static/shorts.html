@@ -56,13 +56,37 @@
     <label class="sel">
       <span>Universe <em class="filter-why">what to screen</em></span>
       <select id="universe">
-        <option value="watchlist" selected>My watchlist</option>
+        <option value="market" selected>Whole market (screened)</option>
+        <option value="watchlist">My watchlist</option>
         <option value="custom">Watchlist + symbols I add</option>
       </select>
     </label>
     <label class="sel" id="extra-wrap" hidden>
       <span>Extra symbols <em class="filter-why">comma separated</em></span>
       <input id="extra" type="text" placeholder="INTC, CVS, PARA" spellcheck="false">
+    </label>
+    <label class="sel market-only" id="cap-wrap">
+      <span>Size <em class="filter-why">where shorts are findable</em></span>
+      <select id="cap">
+        <option value="smallmid" selected>Small and mid cap</option>
+        <option value="small">Small cap</option>
+        <option value="mid">Mid cap</option>
+        <option value="large">Large cap</option>
+        <option value="any">Any size</option>
+      </select>
+    </label>
+    <label class="sel market-only" id="sector-wrap">
+      <span>Sector <em class="filter-why">narrow the field</em></span>
+      <select id="sector"><option value="any">All sectors</option></select>
+    </label>
+    <label class="sel market-only" id="order-wrap">
+      <span>Examine first <em class="filter-why">which slice gets checked</em></span>
+      <select id="order">
+        <option value="decliners" selected>Biggest fallers today</option>
+        <option value="liquid">Most traded</option>
+        <option value="smallest">Smallest</option>
+        <option value="largest">Largest</option>
+      </select>
     </label>
     <label class="check">
       <input type="checkbox" id="hide-squeeze">
@@ -71,6 +95,25 @@
   </form>
 
   <p id="banner" class="banner" hidden></p>
+  <p id="coverage" class="coverage" hidden></p>
+
+  <div class="table-wrap" id="screen-wrap" hidden>
+    <table class="quotes screen-table">
+      <thead>
+        <tr>
+          <th class="col-sym">Company</th>
+          <th>Sector</th>
+          <th class="col-num">Price</th>
+          <th class="col-num">Mkt cap</th>
+          <th class="col-num">Off high</th>
+          <th class="col-num">Net margin</th>
+          <th class="col-num">Weakness</th>
+          <th class="col-act"><span class="sr-only">Analyse</span></th>
+        </tr>
+      </thead>
+      <tbody id="screen-rows"></tbody>
+    </table>
+  </div>
 
   <div id="cards" class="short-cards"></div>
 
