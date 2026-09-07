@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Insider Trades — Stock Watcher</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🕵️</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>Stock Watcher</h1>
+    <nav class="tabs" aria-label="Views">
+      <a href="index.html">Watchlist</a>
+      <a href="earnings.html">Earnings</a>
+      <a href="catalysts.html">Catalysts</a>
+      <a href="insiders.html" aria-current="page">Insiders</a>
+      <a href="group.html">Group</a>
+    </nav>
+  </div>
+  <div class="topbar-right">
+    <span id="status" class="status" role="status" aria-live="polite">Loading…</span>
+    <button id="refresh" class="btn" title="Reload the feed (press R)">Refresh</button>
+  </div>
+</header>
+
+<main class="wide">
+  <p class="lede">
+    Form 4 filings as they arrive at the SEC, across every company — who traded, in
+    what, how much, and what share of their own holding it was. Every row links to
+    the filing it came from.
+  </p>
+
+  <form class="filters" id="filters" autocomplete="off">
+    <label class="sel">
+      <span>Show <em class="filter-why">which kinds of trade</em></span>
+      <select id="mode">
+        <option value="decisions" selected>Decisions only</option>
+        <option value="buys">Open-market buys</option>
+        <option value="sells">Open-market sells</option>
+        <option value="all">Everything filed</option>
+      </select>
+    </label>
+    <label class="sel">
+      <span>Minimum value <em class="filter-why">ignore token trades</em></span>
+      <select id="minValue">
+        <option value="0">Any</option>
+        <option value="50000" selected>$50k</option>
+        <option value="250000">$250k</option>
+        <option value="1000000">$1M</option>
+      </select>
+    </label>
+    <label class="sel">
+      <span>Ticker <em class="filter-why">blank for the whole market</em></span>
+      <input id="ticker" type="text" placeholder="e.g. NVDA" spellcheck="false">
+    </label>
+    <label class="check">
+      <input type="checkbox" id="watchlist-only">
+      <span>My watchlist only <em class="filter-why">hide everything else</em></span>
+    </label>
+  </form>
+
+  <dl class="legend legend-codes" id="legend"></dl>
+
+  <p id="banner" class="banner" hidden></p>
+
+  <div class="table-wrap">
+    <table class="quotes insiders" id="feed-table">
+      <thead>
+        <tr>
+          <th class="col-sym">Company</th>
+          <th>Insider</th>
+          <th>Action</th>
+          <th class="col-num">Shares</th>
+          <th class="col-num">Stake</th>
+          <th class="col-num">Value</th>
+          <th class="col-num">Filed</th>
+          <th class="col-act"><span class="sr-only">Watch</span></th>
+        </tr>
+      </thead>
+      <tbody id="feed-rows"></tbody>
+    </table>
+  </div>
+
+  <p id="empty" class="empty" hidden>
+    Nothing matches these filters. Open-market purchases are genuinely rare —
+    most filings are grants, option exercises and tax withholding. Try
+    "Everything filed", or lower the minimum value.
+  </p>
+
+  <p class="disclaimer">
+    Read directly from Form 4 filings on SEC EDGAR, the same source the
+    aggregators use. Only codes <strong>P</strong> and <strong>S</strong> are
+    discretionary open-market decisions; a trade marked under a
+    <strong>Rule&nbsp;10b5-1</strong> plan was arranged months earlier and says
+    nothing about today's price. Insider buying and selling are not symmetric
+    signals — people sell for reasons unrelated to their view of the company.
+  </p>
+</main>
+
+<script type="module" src="insiders.js"></script>
+</body>
+</html>

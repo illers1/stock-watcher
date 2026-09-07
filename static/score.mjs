@@ -127,6 +127,20 @@ function insider(a) {
       band(ins.netDiscretionary,
         [[-2e7, 12], [-2e6, 30], [-2e5, 44], [0, 50], [2e5, 58], [2e6, 74], [2e7, 92], [1e8, 100]]),
       "usd"));
+
+    /* A dollar amount says little without the holding behind it: a $1m sale is
+       a gesture from someone sitting on $100m and an exit from someone sitting
+       on $2m. Form 4 reports the stake afterwards, so the proportion is known. */
+    const move = ins.largestStakeMove;
+    if (move && move.percent !== null && move.percent !== undefined) {
+      const signed = move.kind === "buy" ? move.percent : -move.percent;
+      inputs.push(input(
+        move.kind === "buy" ? "Largest single addition to a stake"
+                            : "Largest single sale as a share of the stake",
+        signed,
+        band(signed, [[-25, 8], [-10, 25], [-3, 42], [0, 50], [3, 62], [10, 82], [25, 96]]),
+        "pct"));
+    }
     inputs.push(input("Open-market buys", ins.buyCount,
       band(ins.buyCount, [[0, 42], [1, 62], [3, 80], [6, 92]]), "num0"));
     inputs.push(input("Open-market sells", ins.sellCount,

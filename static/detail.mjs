@@ -181,30 +181,64 @@ function earningsSection(a) {
 function insiderSection(a) {
   const ins = a.insiders;
   if (!ins) return `<p class="muted">No insider filings available.</p>`;
-  const c = ins.counts ?? {};
+  const fromSec = ins.source === "sec";
+  const move = ins.largestStakeMove;
+
   return `
     <div class="kv">
-      <div><dt>Open-market buys</dt><dd class="${c.buy ? "up" : ""}">${n0(c.buy)}</dd></div>
-      <div><dt>Open-market sells</dt><dd class="${c.sell ? "down" : ""}">${n0(c.sell)}</dd></div>
+      <div><dt>Open-market buys</dt><dd class="${ins.buyCount ? "up" : ""}">${n0(ins.buyCount)}</dd></div>
+      <div><dt>Open-market sells</dt><dd class="${ins.sellCount ? "down" : ""}">${n0(ins.sellCount)}</dd></div>
       <div><dt>Net discretionary</dt><dd class="${dirClass(ins.netDiscretionary)}">${usd(ins.netDiscretionary)}</dd></div>
-      <div><dt>Preset-plan sales</dt><dd class="muted">${usd(ins.plannedSells)}</dd></div>
+      <div><dt>Under a 10b5-1 plan</dt><dd class="muted">${usd(ins.plannedSells)}</dd></div>
     </div>
-    <p class="caveat">Only <strong>Buy</strong> and <strong>Sell</strong> are discretionary decisions.
-      Grants, vesting, tax withholding and 10b5-1 plan sales are shown for context but excluded
-      from the score — they run on fixed schedules and say nothing about conviction.</p>
+    ${move && move.percent !== null ? `
+      <p class="stake-move">Largest single move: <strong>${esc(move.name ?? "an insider")}</strong>
+        ${move.kind === "buy" ? "added to" : "sold"}
+        <strong class="${move.kind === "buy" ? "up" : "down"}">${pctPlain(move.percent, 1)}</strong>
+        of their holding${move.value ? ` (${usd(move.value)})` : ""}.</p>` : ""}
+    <p class="caveat">${fromSec
+      ? `Read from the Form 4 filings themselves. Only codes <strong>P</strong> (open-market
+         buy) and <strong>S</strong> (open-market sale) are discretionary decisions; grants,
+         option exercises, tax withholding and gifts run on fixed schedules. A trade the filer
+         marked as made under a pre-arranged <strong>Rule 10b5-1</strong> plan is shown but
+         excluded from the score — the decision was taken months earlier.`
+      : `From an aggregated feed, because EDGAR returned no Form 4 filings for this symbol —
+         usually a foreign issuer, which is exempt from filing them. Categories are inferred
+         from the feed's wording rather than read from a filing.`}</p>
     <table class="mini">
-      <thead><tr><th>Insider</th><th>Role</th><th>Date</th><th>Action</th><th class="r">Shares</th><th class="r">Value</th></tr></thead>
-      <tbody>${ins.trades.map((t) => `
-        <tr class="${t.discretionary ? "" : "routine"}">
-          <td>${esc((t.name ?? "").toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase()))}</td>
-          <td class="muted">${esc(t.relation ?? "—")}</td>
-          <td class="muted">${esc(t.date ?? "—")}</td>
-          <td><span class="tag tag-${t.kind}">${esc(t.kindLabel)}</span></td>
+      <thead><tr><th>Insider</th><th>Role</th><th>Date</th><th>Action</th>
+        <th class="r">Shares</th><th class="r">Stake</th><th class="r">Value</th></tr></thead>
+      <tbody>${ins.trades.map((t) => {
+        const routine = !(t.discretionary ?? false) || t.planned;
+        const role = t.title || (t.roles ?? []).join(", ") || t.relation || "—";
+        return `
+        <tr class="${routine ? "routine" : ""}">
+          <td>${t.url
+              ? `<a href="${esc(t.url)}" target="_blank" rel="noopener noreferrer">${esc(titleCase(t.name))}</a>`
+              : esc(titleCase(t.name))}</td>
+          <td class="muted">${esc(role)}</td>
+          <td class="muted">${esc(t.date ?? t.filingDate ?? "—")}</td>
+          <td><span class="tag tag-${t.kind}">${esc(t.label ?? t.kindLabel ?? "—")}</span>${
+            t.planned ? '<span class="tag tag-plan" title="Made under a pre-arranged Rule 10b5-1 plan">10b5-1</span>' : ""}</td>
           <td class="r">${n0(t.shares)}</td>
+          <td class="r ${t.stakePercent ? (t.disposed ? "down" : "up") : "muted"}">${
+            t.stakePercent === null || t.stakePercent === undefined ? "—" : pctPlain(t.stakePercent, 1)}</td>
           <td class="r">${usd(t.value)}</td>
-        </tr>`).join("")}</tbody>
-    </table>`;
+        </tr>`;
+      }).join("")}</tbody>
+    </table>
+    ${fromSec ? `<p class="caveat">${n0(ins.filingCount)} Form 4 filings read from SEC EDGAR${
+        ins.coveredFrom ? `, covering ${esc(ins.coveredFrom)} to ${esc(ins.coveredTo)}` : ""}.
+      Each name links to the filing it came from.${
+        ins.truncated
+          ? ` This company files often enough to hit the ${n0(ins.filingCount)}-filing cap, so the
+              window is shorter than the ${n0(ins.sinceDays)} days intended — quiet here means
+              quiet over those dates, not over the quarter.`
+          : ""}</p>` : ""}`;
 }
+
+const titleCase = (s) => String(s ?? "")
+  .toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase());
 
 function riskSection(a) {
   const r = a.risk ?? {}, f = a.fundamentals ?? {}, m = a.momentum ?? {};

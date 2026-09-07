@@ -80,7 +80,11 @@ select {
   border: 1px solid var(--border-strong); background: var(--panel); color: var(--text);
 }
 
-main { max-width: 1080px; margin: 0 auto; padding: 22px 24px 8px; }
+/* The watchlist grew from four columns to nine; at 1080px the last of them sat
+   off the edge and had to be scrolled to. The page now uses the viewport it has,
+   with a ceiling wide enough that the table never scrolls sideways on a laptop. */
+main { max-width: 1480px; margin: 0 auto; padding: 22px 24px 8px; }
+main.wide { max-width: 1600px; }
 
 /* ---------- add bar + autocomplete ---------- */
 .addbar { display: flex; gap: 10px; margin-bottom: 18px; }
@@ -174,8 +178,8 @@ table.quotes { width: 100%; border-collapse: collapse; }
 
 td.sym { text-align: left; }
 .sym-code { font-weight: 650; letter-spacing: -.01em; }
-.sym-name { display: block; color: var(--muted); font-size: 12.5px; max-width: 230px;
-  overflow: hidden; text-overflow: ellipsis; }
+.sym-name { display: block; color: var(--muted); font-size: 12.5px; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 td.price { font-size: 16px; font-weight: 600; }
 .cur { color: var(--muted); font-size: 11.5px; font-weight: 500; margin-left: 3px; }
 .up { color: var(--up); }
@@ -201,7 +205,7 @@ tr.stale { opacity: .5; }
 .empty { color: var(--muted); text-align: center; padding: 38px 20px; max-width: 420px; margin: 0 auto; }
 
 .foot {
-  max-width: 1080px; margin: 0 auto; padding: 16px 24px 32px;
+  max-width: 1480px; margin: 0 auto; padding: 16px 24px 32px;
   display: flex; justify-content: space-between; gap: 16px; align-items: center;
   color: var(--muted); font-size: 12px;
 }
@@ -747,4 +751,36 @@ td.by { text-align: left; }
 
 @media (max-width: 760px) {
   .legend-row { grid-template-columns: 1fr; gap: 3px; }
+}
+.tag-plan { background: color-mix(in srgb, var(--muted) 16%, transparent); margin-left: 5px; }
+.tag-grant, .tag-tax, .tag-exercise, .tag-gift, .tag-issuer { opacity: .85; }
+.stake-move { font-size: 12.5px; margin: 12px 0 0; }
+table.mini a { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); }
+table.mini a:hover { color: var(--accent); }
+
+
+/* ---------- insider tape ---------- */
+table.insiders td { vertical-align: top; }
+table.insiders td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.insiders th.col-num { text-align: right; }
+table.insiders .sym-name { font-weight: 400; max-width: 210px; }
+table.insiders a { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); }
+table.insiders a:hover { color: var(--accent); }
+table.insiders tr.routine { opacity: .62; }
+.legend-n { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.filters { display: flex; flex-wrap: wrap; gap: 14px 20px; align-items: flex-end; margin-bottom: 4px; }
+.filters .sel { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.filters .sel > span { font-weight: 550; color: var(--text); }
+.filters input[type="text"] {
+  font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 9px;
+  border: 1px solid var(--border-strong); background: var(--panel); color: var(--text); width: 130px;
+}
+
+/* The code tags run to about 150px ("S · Open-market sale"), so the 92px
+   column used elsewhere let the label collide with its description. */
+.legend-codes { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.legend-codes .legend-row { grid-template-columns: 152px 1fr; align-items: start; }
+.legend-codes .tag { white-space: nowrap; }
+@media (max-width: 760px) {
+  .legend-codes .legend-row { grid-template-columns: 1fr; }
 }

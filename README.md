@@ -71,11 +71,21 @@ Three things the score deliberately does:
   remaining weights renormalise, so an ETF with no earnings or insiders is not
   punished for it. The `confidence` figure reports how much of the weighted
   picture actually loaded, and a dashed badge in the table flags a thin one.
-- **Ignores routine insider activity.** Only `Buy` and `Sell` are discretionary
-  decisions. Share grants, vesting, tax withholding and 10b5-1 plan sales run on
-  fixed schedules and are shown for context but excluded from the score.
-  Counting a grant as a purchase would make ordinary compensation look like
-  conviction.
+- **Ignores routine insider activity.** Insider trades are read from the Form 4
+  filings on SEC EDGAR rather than from a summary of them, which means the SEC
+  transaction code itself decides: only **P** (open-market buy) and **S**
+  (open-market sale) are discretionary. Grants, option exercises, tax
+  withholding and gifts run on fixed schedules. The filing also carries the
+  filer's own **Rule 10b5-1** flag, so a sale arranged months in advance is
+  shown but excluded — the decision was not taken at today's price. And because
+  the filing reports the holding afterwards, a sale is scored as a share of the
+  insider's stake, not a bare dollar amount: selling 8% of a position says
+  something a $1m figure does not.
+
+  Filings are read over a 90-day lookback rather than a fixed count, because
+  companies file in bursts — one issuer's eight most recent Form 4s were all
+  lodged on a single morning. Where a company files often enough to hit the cap,
+  the panel says so, since a quiet window is not the same as quiet trading.
 
 ### What it is not
 
@@ -217,6 +227,28 @@ Two things this deliberately gets wrong in the safe direction:
 FDA decisions are set six to twelve months ahead, so they keep their own
 one-year horizon; the window control governs the short-dated kinds. Clipping
 them to the same window as ex-dividend dates hid every one.
+
+
+## Insider Trades
+
+A market-wide Form 4 tape at `insiders.html`, alongside the per-stock insider
+section in the watchlist panel. The panel answers "what have insiders done at
+this company"; this answers the other question — what is being filed right now,
+anywhere — which is how insider activity is usually read.
+
+Filter to decisions only, to buys or sells, by minimum value, by ticker, or to
+your watchlist. Every row links to the filing, and shows the trade as a share
+of the insider's own holding as well as in dollars.
+
+The legend explains each SEC transaction code and why most of them are not
+signals: **P** is a purchase with the insider's own money and the rarest filing
+on the tape, **S** a sale and a weaker signal in the other direction, while
+**A** (grants), **M** (option exercises), **F** (tax withholding) and **G**
+(gifts) are scheduled events in which no decision was taken.
+
+Data comes from SEC EDGAR directly. Trackers such as browseSEC read the same
+filings; going to the source removes a dependency and keeps every row anchored
+to the document it came from.
 
 ## Deploying it as a website
 

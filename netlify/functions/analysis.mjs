@@ -6,6 +6,7 @@
    Python server all share one implementation instead of three. */
 
 import { SYMBOL_RE, fetchAll } from "../lib/sources.mjs";
+import { fetchInsiderFilings } from "../lib/insiders.mjs";
 
 const json = (body, headers = {}) =>
   new Response(JSON.stringify(body), {
@@ -24,7 +25,16 @@ export default async (req) => {
   }
 
   try {
-    const sources = await fetchAll(symbol);
+    /* Insider filings come from EDGAR rather than the aggregator: the filing
+       carries the SEC transaction code, the Rule 10b5-1 flag and the holding
+       afterwards, none of which survive being summarised into a label. The
+       aggregator's version is still fetched as a fallback for symbols EDGAR
+       cannot resolve, such as foreign issuers that file no Form 4. */
+    const [sources, secInsiders] = await Promise.all([
+      fetchAll(symbol),
+      fetchInsiderFilings(symbol).catch(() => ({ cik: null, filings: [] })),
+    ]);
+    sources.insiderFilings = secInsiders;
     const failed = Object.entries(sources).filter(([, v]) => v?.error).map(([k]) => k);
     return json(
       { symbol, sources, asOf: Date.now() / 1000, failed, error: null },

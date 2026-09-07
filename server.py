@@ -667,6 +667,170 @@ def fetch_catalysts(days):
         return {k: fut.result() for k, fut in futures.items()}
 
 
+
+# --------------------------------------------------------------------------
+# Form 4 insider filings from EDGAR. Mirrors netlify/lib/insiders.mjs: fetch
+# the raw XML only, leaving static/insider-model.mjs to parse it.
+# --------------------------------------------------------------------------
+
+EDGAR_ATOM = "https://www.sec.gov/cgi-bin/browse-edgar"
+INSIDER_MAX_FILINGS = 15
+INSIDER_LOOKBACK_DAYS = 90
+
+
+def resolve_cik(symbol):
+    url = ("%s?action=getcompany&CIK=%s&type=4&dateb=&owner=include&count=1&output=atom"
+           % (EDGAR_ATOM, urllib.parse.quote(symbol)))
+    req = urllib.request.Request(url, headers={"User-Agent": SEC_UA})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = resp.read().decode("utf-8", "replace")
+    found = re.search(r"<cik>(\d+)</cik>", body, re.I)
+    return found.group(1).zfill(10) if found else None
+
+
+def raw_document_name(primary_document):
+    """The submissions feed names the rendered doc; the original sits beside it."""
+    name = str(primary_document or "")
+    return name.split("/", 1)[1] if "/" in name else name
+
+
+def fetch_insider_filings(symbol):
+    cutoff = (datetime.date.today() - datetime.timedelta(days=INSIDER_LOOKBACK_DAYS)).isoformat()
+    empty = {"cik": None, "filings": [], "coveredFrom": None, "coveredTo": None,
+             "truncated": False, "sinceDays": INSIDER_LOOKBACK_DAYS}
+    try:
+        cik = resolve_cik(symbol)
+    except Exception:
+        return empty
+    if not cik:
+        return empty
+
+    try:
+        subs = raw_json_ua("https://data.sec.gov/submissions/CIK%s.json" % cik, SEC_UA, 12)
+        recent = (subs.get("filings") or {}).get("recent") or {}
+    except Exception:
+        return dict(empty, cik=cik)
+
+    wanted = []
+    truncated = False
+    forms = recent.get("form") or []
+    dates = recent.get("filingDate") or [None] * len(forms)
+    for i, form in enumerate(forms):
+        if form != "4":
+            continue
+        filed = dates[i] or ""
+        if filed and filed < cutoff:
+            break  # the feed is newest-first
+        if len(wanted) >= INSIDER_MAX_FILINGS:
+            truncated = True
+            break
+        accession = str((recent.get("accessionNumber") or [None] * len(forms))[i] or "")
+        doc = raw_document_name((recent.get("primaryDocument") or [None] * len(forms))[i])
+        if not accession or not doc:
+            continue
+        stem = "https://www.sec.gov/Archives/edgar/data/%d/%s" % (int(cik), accession.replace("-", ""))
+        wanted.append({
+            "accession": accession,
+            "filingDate": filed or None,
+            "url": "%s/%s" % (stem, doc),
+            "indexUrl": "%s/%s-index.htm" % (stem, accession),
+        })
+
+    def one(item):
+        try:
+            req = urllib.request.Request(item["url"], headers={"User-Agent": SEC_UA})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                xml = resp.read().decode("utf-8", "replace")
+            if "<ownershipDocument" not in xml:
+                return None
+            return dict(item, xml=xml)
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        filings = [f for f in pool.map(one, wanted) if f]
+    got = sorted(f["filingDate"] for f in filings if f.get("filingDate"))
+    return {"cik": cik, "filings": filings,
+            "coveredFrom": got[0] if got else None,
+            "coveredTo": got[-1] if got else None,
+            "truncated": truncated, "sinceDays": INSIDER_LOOKBACK_DAYS}
+
+
+
+CURRENT_FEED = "https://www.sec.gov/cgi-bin/browse-edgar"
+FEED_MAX = 60
+
+
+def parse_filing_href(href):
+    # The accession appears twice in the path: undashed as the directory, then
+    # dashed in the filename. Expecting it straight after the CIK matched nothing.
+    m = re.search(r"/Archives/edgar/data/(\d+)/(?:\d+/)?(\d{10}-?\d{2}-?\d{6})-index",
+                  str(href or ""))
+    if not m:
+        return None
+    acc = m.group(2)
+    if "-" not in acc:
+        acc = "%s-%s-%s" % (acc[:10], acc[10:12], acc[12:])
+    return {"cik": m.group(1), "accession": acc}
+
+
+def extract_ownership_xml(text):
+    body = str(text or "")
+    start = body.find("<ownershipDocument")
+    end = body.find("</ownershipDocument>")
+    if start == -1 or end == -1:
+        return None
+    return body[start:end + len("</ownershipDocument>")]
+
+
+def fetch_insider_feed(limit):
+    """Recent Form 4s across the market. Each filing is listed twice, under the
+    issuer and under the reporting person, so entries are deduplicated."""
+    capped = max(1, min(FEED_MAX, limit))
+    url = ("%s?action=getcurrent&type=4&company=&dateb=&owner=include&count=%d&output=atom"
+           % (CURRENT_FEED, min(100, capped * 2 + 20)))
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": SEC_UA})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            feed = resp.read().decode("utf-8", "replace")
+    except Exception:
+        return {"filings": [], "asOf": None}
+
+    seen, wanted = set(), []
+    for entry in feed.split("<entry>")[1:]:
+        href = re.search(r'href="([^"]+)"', entry)
+        parsed = parse_filing_href(href.group(1)) if href else None
+        if not parsed or parsed["accession"] in seen:
+            continue
+        seen.add(parsed["accession"])
+        updated = re.search(r"<updated>([^<]+)</updated>", entry)
+        wanted.append({
+            "cik": parsed["cik"],
+            "accession": parsed["accession"],
+            "updated": updated.group(1) if updated else None,
+            "indexUrl": href.group(1),
+            "url": "https://www.sec.gov/Archives/edgar/data/%d/%s.txt" % (
+                int(parsed["cik"]), parsed["accession"]),
+        })
+        if len(wanted) >= capped:
+            break
+
+    def one(item):
+        try:
+            req = urllib.request.Request(item["url"], headers={"User-Agent": SEC_UA})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                xml = extract_ownership_xml(resp.read().decode("utf-8", "replace"))
+            if not xml:
+                return None
+            return dict(item, xml=xml, filingDate=(item.get("updated") or "")[:10] or None)
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        filings = [f for f in pool.map(one, wanted) if f]
+    return {"filings": filings, "asOf": datetime.datetime.utcnow().isoformat() + "Z"}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=STATIC_DIR, **kwargs)
@@ -734,6 +898,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json({"symbol": symbol, "sources": {},
                                        "error": "A valid symbol is required"})
             sources = fetch_analysis(symbol)
+            try:
+                sources["insiderFilings"] = fetch_insider_filings(symbol)
+            except Exception:
+                sources["insiderFilings"] = {"cik": None, "filings": []}
             failed = [k for k, v in sources.items() if isinstance(v, dict) and v.get("error")]
             return self.send_json({"symbol": symbol, "sources": sources,
                                    "asOf": time.time(), "failed": failed, "error": None})
@@ -780,6 +948,15 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as exc:
                 return self.send_json({"sources": {}, "days": days, "asOf": None,
                                        "error": "Catalysts failed (%s)" % type(exc).__name__})
+
+        if parsed.path == "/api/insider-feed":
+            try:
+                limit = int((params.get("limit") or ["30"])[0])
+            except ValueError:
+                limit = 30
+            feed = fetch_insider_feed(max(1, min(60, limit)))
+            feed["error"] = None
+            return self.send_json(feed)
 
         if parsed.path == "/":
             self.path = "/index.html"

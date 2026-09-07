@@ -22,6 +22,9 @@ const { parseAnalysis, classifyInsiderTrade } = await import("../static/analyze.
 const { default: earningsFn, config: earningsCfg, buildEarnings } =
   await import("../netlify/functions/earnings.mjs" + v);
 const { tradingDays } = await import("../netlify/lib/calendar.mjs" + v);
+const { parseForm4, summariseInsiders, CODES } = await import("../static/insider-model.mjs" + v);
+const { rawDocumentName } = await import("../netlify/lib/insiders.mjs" + v);
+const { parseFilingHref, extractOwnershipXml } = await import("../netlify/lib/insider-feed.mjs" + v);
 const { toIso, longDateToIso, splitDisplayName, regulatoryDate, buildCatalysts,
         countByKind, excerptAround, KINDS, REGULATORY_HORIZON_DAYS } =
   await import("../static/catalysts-model.mjs" + v);
@@ -788,6 +791,119 @@ check("placeholder values are dropped, not rendered",
 check("real values beside a placeholder survive",
       withBlanks[0].facts.some(f => /quarter ending Jun\/2026/.test(f)),
       withBlanks[0].facts.join(" · "));
+
+/* ============ SEC Form 4 insider filings ============ */
+
+const f4Sale = await (await fetch("./form4-sale-fixture.xml")).text();
+const f4Gift = await (await fetch("./form4-gift-fixture.xml")).text();
+
+/* The submissions feed names the rendered document; the machine-readable
+   original sits beside it without the stylesheet prefix. */
+eq("rawDocumentName strips the xsl prefix",
+   rawDocumentName("xslF345X06/wk-form4_1788387031.xml"), "wk-form4_1788387031.xml");
+eq("rawDocumentName leaves a bare name alone",
+   rawDocumentName("form4.xml"), "form4.xml");
+eq("rawDocumentName tolerates nothing", rawDocumentName(null), "");
+
+const sale = parseForm4(f4Sale, { filingDate: "2026-09-02", url: "u", indexUrl: "i" });
+eq("parses the reporting owner", sale.owner, "STEVENS MARK A");
+eq("parses the issuer symbol", sale.symbol, "NVDA");
+eq("parses the role", sale.roles, ["Director"]);
+check("parses every transaction line", sale.transactions.length >= 7, String(sale.transactions.length));
+
+const firstSale = sale.transactions[0];
+eq("reads the SEC transaction code", firstSale.code, "S");
+eq("names the code", firstSale.label, "Open-market sale");
+eq("an open-market sale is discretionary", firstSale.discretionary, true);
+eq("a sale is a disposal", firstSale.disposed, true);
+check("shares and price are numbers",
+      firstSale.shares > 0 && firstSale.price > 0, "");
+check("value is shares times price",
+      Math.abs(firstSale.value - firstSale.shares * firstSale.price) < 1e-6, "");
+/* The stake beforehand is the holding afterwards plus what was sold, which is
+   what turns a share count into a proportion. */
+check("a sale is expressed as a share of the stake",
+      firstSale.stakePercent > 0 && firstSale.stakePercent < 100,
+      String(firstSale.stakePercent));
+
+/* The filer states on the form whether a trade ran off a pre-arranged plan.
+   This one says it did not, which is the difference between a scheduled
+   disposal and a decision. */
+eq("the 10b5-1 flag is read from the filing", sale.planned, false);
+eq("and we know it was actually stated", sale.planStated, true);
+
+const gift = parseForm4(f4Gift, { filingDate: "2026-09-04" });
+eq("a gift carries code G", gift.transactions[0].code, "G");
+eq("a gift is not a discretionary trade", gift.transactions[0].discretionary, false);
+eq("every code has a label", Object.values(CODES).filter(c => !c.label), []);
+eq("only P and S are discretionary",
+   Object.keys(CODES).filter(k => CODES[k].discretionary).sort(), ["P", "S"]);
+
+eq("malformed XML yields nothing", parseForm4("<not-a-form-4/>"), null);
+eq("empty input yields nothing", parseForm4(""), null);
+
+/* -- rolling filings into a summary -- */
+const summary = summariseInsiders([
+  { xml: f4Sale, filingDate: "2026-09-02", indexUrl: "i1" },
+  { xml: f4Gift, filingDate: "2026-09-04", indexUrl: "i2" },
+]);
+eq("the summary is marked as coming from EDGAR", summary.source, "sec");
+eq("both filings are counted", summary.filingCount, 2);
+check("open-market sales are counted", summary.sellCount >= 7, String(summary.sellCount));
+eq("no buys in these filings", summary.buyCount, 0);
+check("net discretionary is negative on a run of sales",
+      summary.netDiscretionary < 0, String(summary.netDiscretionary));
+/* A gift is not a sale, however large. */
+check("the gift is excluded from the discretionary total",
+      summary.counts.gift >= 1 && summary.discretionarySells > 0, JSON.stringify(summary.counts));
+check("the largest move is reported as a proportion",
+      summary.largestStakeMove.percent > 0, JSON.stringify(summary.largestStakeMove));
+eq("the largest move names the insider", summary.largestStakeMove.name, "STEVENS MARK A");
+eq("nothing in, nothing out", summariseInsiders([]), null);
+
+/* The score must read a big unplanned sale as a share of the stake. */
+const insiderFactor = (model) =>
+  scoreAnalysis(model, PRESETS.sprint.weights, 30).factors.find(f => f.key === "insider");
+const withSales = { ...model, insiders: summary };
+check("a large unplanned sale scores below neutral",
+      insiderFactor(withSales).score < 50, String(insiderFactor(withSales).score));
+check("the stake proportion appears as a scored input",
+      insiderFactor(withSales).inputs.some(i => /share of the stake/.test(i.label)), "");
+
+/* A bare filing count is the wrong bound: bursty filers can put eight Form 4s
+   on one morning, which then reads as a quiet quarter. */
+const coverage = summariseInsiders(
+  [{ xml: f4Sale, filingDate: "2026-09-02", indexUrl: "i1" }],
+  { coveredFrom: "2026-06-24", coveredTo: "2026-09-03", truncated: true, sinceDays: 90 });
+eq("the covered window travels with the summary", coverage.coveredFrom, "2026-06-24");
+eq("and its end", coverage.coveredTo, "2026-09-03");
+eq("hitting the cap is flagged", coverage.truncated, true);
+eq("the intended lookback is reported", coverage.sinceDays, 90);
+eq("an untruncated window is not flagged",
+   summariseInsiders([{ xml: f4Sale }], { truncated: false }).truncated, false);
+
+/* -- the market-wide Form 4 tape -- */
+
+/* EDGAR puts the accession in the path twice: undashed as the directory, then
+   dashed in the filename. A pattern expecting it straight after the CIK
+   matched nothing at all, and the feed came back silently empty. */
+eq("parseFilingHref reads the real EDGAR path shape",
+   parseFilingHref("https://www.sec.gov/Archives/edgar/data/2006392/000149315226041638/0001493152-26-041638-index.htm"),
+   { cik: "2006392", accession: "0001493152-26-041638" });
+eq("parseFilingHref also accepts the short form",
+   parseFilingHref("/Archives/edgar/data/320193/0000320193-26-000010-index.htm").accession,
+   "0000320193-26-000010");
+eq("parseFilingHref rejects anything else",
+   parseFilingHref("https://example.com/nope"), null);
+eq("parseFilingHref tolerates nothing", parseFilingHref(null), null);
+
+/* One request per filing: the full submission text carries the XML inline. */
+const wrapped = "-----BEGIN PRIVACY-----\n<ownershipDocument><issuer>x</issuer></ownershipDocument>\ntrailing";
+eq("extractOwnershipXml pulls the document out of the submission",
+   extractOwnershipXml(wrapped), "<ownershipDocument><issuer>x</issuer></ownershipDocument>");
+eq("extractOwnershipXml returns nothing when absent",
+   extractOwnershipXml("just a header, no form"), null);
+eq("extractOwnershipXml tolerates nothing", extractOwnershipXml(null), null);
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

@@ -7,6 +7,8 @@
    Every field is optional by design: any single upstream can fail without
    taking the analysis down, so callers must treat nulls as normal. */
 
+import { summariseInsiders } from "./insider-model.mjs";
+
 const num = (v) => {
   if (v === null || v === undefined) return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -132,7 +134,9 @@ function parseEarnings(raw) {
   };
 }
 
-/* Insider filings use a small, fixed vocabulary, and most of it carries no
+/* Fallback for symbols EDGAR cannot resolve. The aggregator flattens each
+   trade into a phrase, so the category has to be recovered from that wording.
+   Insider filings use a small, fixed vocabulary, and most of it carries no
    signal at all. Only `Buy` and `Sell` are discretionary open-market decisions.
    `Acquisition (Non Open Market)` is RSU vesting, `Disposition (Non Open
    Market)` is usually tax withholding, `Option Execute` is an exercise, and
@@ -286,6 +290,19 @@ function parseHistory(raw) {
  * @param symbol  the ticker requested
  * @param earningsEvent  optional {date, time, epsForecast} from /api/calendar
  */
+/* EDGAR is the primary source; the aggregator stands in only when EDGAR
+   returns nothing, which happens for foreign issuers exempt from Form 4. */
+function insiderSummary(b) {
+  const feed = b.insiderFilings;
+  const filings = feed?.filings;
+  if (Array.isArray(filings) && filings.length) {
+    const summary = summariseInsiders(filings, feed);
+    if (summary) return summary;
+  }
+  const fallback = ok(b.insiders) ? parseInsiders(b.insiders) : null;
+  return fallback ? { ...fallback, source: "aggregator" } : null;
+}
+
 export function parseAnalysis(bundle, symbol, earningsEvent = null) {
   const b = bundle ?? {};
   const quote = ok(b.quote) ? parseQuote(b.quote) : null;
@@ -343,7 +360,7 @@ export function parseAnalysis(bundle, symbol, earningsEvent = null) {
     fundamentals: quote?.fundamentals ?? null,
     analysts: parseAnalysts(ok(b.target) ? b.target : null, ok(b.ratings) ? b.ratings : null, price),
     earnings: earnings ? { ...earnings, next } : (next ? { history: [], next } : null),
-    insiders: ok(b.insiders) ? parseInsiders(b.insiders) : null,
+    insiders: insiderSummary(b),
     news: ok(b.news) ? parseNews(b.news) : [],
     shortInterest: ok(b.short) ? parseShort(b.short) : null,
     momentum: history,
