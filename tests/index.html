@@ -41,6 +41,8 @@ const eq = (name, got, want) =>
         `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
 
 const fixture = await (await fetch("./fixture.json")).json();
+const isoIn = (n) => { const d = new Date(); d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 
 /* ============ parsing ============ */
 
@@ -608,24 +610,46 @@ try { await handleGroup({ action: "get", code: "FGHJKMNPQR" }, brokenStore); }
 catch (e) { threw = true; }
 eq("a store failure propagates for the handler to report", threw, true);
 
-/* -- corroborating an upcoming date against last year's cadence -- */
-const corroborated = parseAnalysis(bundle.sources, "NVDA",
-  { date: "2026-09-20", time: "time-after-hours", epsForecast: "1.23", lastYearReported: "9/18/2025" });
-eq("a ~year gap is corroborated", corroborated.earnings.next.corroborated, true);
-check("the year gap is computed",
-      Math.abs(corroborated.earnings.next.yearGap - 367) <= 1,
-      String(corroborated.earnings.next.yearGap));
-eq("a supplied session time is recognised", corroborated.earnings.next.timeKnown, true);
+/* -- confirmed vs projected earnings dates --
+   The upstream publishes a session only for announced dates. Its own per-symbol
+   page calls the rest "estimated ... derived from an algorithm", or admits it
+   has no date at all, so the session is the discriminator. The year gap is not:
+   the projection is built from last year's date. */
+const confirmedEvent = parseAnalysis(bundle.sources, "NVDA",
+  { date: "2026-09-20", time: "time-after-hours", epsForecast: "1.23",
+    lastYearReported: "9/18/2025", estimateCount: "12" });
+eq("a supplied session marks the date confirmed", confirmedEvent.earnings.next.confirmed, true);
+check("the year gap is kept as context",
+      Math.abs(confirmedEvent.earnings.next.yearGap - 367) <= 1,
+      String(confirmedEvent.earnings.next.yearGap));
+eq("estimate count is parsed", confirmedEvent.earnings.next.estimateCount, 12);
 
-const offCadence = parseAnalysis(bundle.sources, "NVDA",
-  { date: "2026-09-20", time: "time-not-supplied", lastYearReported: "2/18/2025" });
-eq("a wild gap is not corroborated", offCadence.earnings.next.corroborated, false);
-eq("a missing session time is flagged", offCadence.earnings.next.timeKnown, false);
+const projected = parseAnalysis(bundle.sources, "NVDA",
+  { date: "2026-09-20", time: "time-not-supplied", lastYearReported: "9/18/2025" });
+eq("no session means not confirmed", projected.earnings.next.confirmed, false);
+/* A tidy year gap must NOT rescue a projected date: that is the circularity. */
+check("a projected date is not rescued by a tidy year gap",
+      projected.earnings.next.confirmed === false &&
+      Math.abs(projected.earnings.next.yearGap - 367) <= 1, "");
 
-const noPrior = parseAnalysis(bundle.sources, "NVDA", { date: "2026-09-20" });
-eq("no prior-year date leaves corroboration unknown", noPrior.earnings.next.corroborated, null);
-check("days away is still computed without a prior year",
-      typeof noPrior.earnings.next.daysAway === "number", "");
+const noTimeField = parseAnalysis(bundle.sources, "NVDA", { date: "2026-09-20" });
+eq("a missing time field is not confirmed", noTimeField.earnings.next.confirmed, false);
+check("days away is still computed",
+      typeof noTimeField.earnings.next.daysAway === "number", "");
+
+/* The Catalyst factor must prefer an announced date over a projected one. */
+const wSprint = PRESETS.sprint.weights;
+const cf = (m) => scoreAnalysis(m, wSprint, 30).factors.find(f => f.key === "catalyst");
+const soonConfirmed = parseAnalysis(bundle.sources, "NVDA",
+  { date: isoIn(3), time: "time-after-hours" });
+const soonProjected = parseAnalysis(bundle.sources, "NVDA",
+  { date: isoIn(3), time: "time-not-supplied" });
+check("a confirmed imminent date scores above a projected one",
+      cf(soonConfirmed).score > cf(soonProjected).score,
+      `${cf(soonConfirmed).score} vs ${cf(soonProjected).score}`);
+check("a projected date is pulled toward neutral, not to zero",
+      cf(soonProjected).score > 40 && cf(soonProjected).score < cf(soonConfirmed).score,
+      String(cf(soonProjected).score));
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

@@ -102,20 +102,22 @@ function catalystSection(a) {
         ${a.earnings?.beatRate !== null && a.earnings?.beatRate !== undefined
           ? `<br>Beat consensus in ${Math.round(a.earnings.beatRate * 100)}% of the last ${a.earnings.quarters} quarters`
           : ""}
-        ${next.lastYearReported
-          ? `<br><span class="${next.corroborated ? "corroborated" : "uncorroborated"}">${
-              next.corroborated
-                ? `Consistent with last year (reported ${esc(next.lastYearReported)}, ${next.yearGap} days apart)`
-                : `Does not match last year's cadence (reported ${esc(next.lastYearReported)}, ${next.yearGap} days apart) — likely an estimate`
-            }</span>`
+        <br><span class="${next.confirmed ? "corroborated" : "uncorroborated"}">${
+          next.confirmed
+            ? "Date announced by the company"
+            : "Date estimated from past reporting cadence — may move"
+        }</span>${next.lastYearReported
+          ? `<br><span class="muted">Reported ${esc(next.lastYearReported)} last year, ${next.yearGap} days apart</span>`
           : ""}
       </div>
     </div>
-    <p class="caveat">Dates come from the exchange calendar. Confirmed dates are
-      usually published with a time of day; an entry without one is more often a
-      projection from the company's past cadence and can move by a few days.
-      ${next.timeKnown ? "This one carries a time, so it is likely confirmed."
-                       : "This one has no time attached, so treat it as provisional."}</p>`;
+    <p class="caveat">${next.confirmed
+      ? `The exchange calendar lists a session for this date (${esc(when)}), which it
+         publishes only once a company has announced it.`
+      : `The exchange calendar gives no session time for this date, which means it is
+         projected from the company's past reporting pattern rather than announced.
+         Such dates get reduced weight in the Catalyst score, and some turn out not to
+         be scheduled at all.`}</p>`;
 }
 
 function analystSection(a) {

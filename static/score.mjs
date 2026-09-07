@@ -64,9 +64,19 @@ function catalyst(a, horizonDays) {
       ? band(next.daysAway, [[0, 100], [3, 95], [7, 88], [14, 74], [30, 58], [60, 35]])
       : 25;
     const reliability = beatRate === null || beatRate === undefined ? 0.5 : beatRate;
+    let score = clamp(proximity * (0.55 + reliability * 0.45));
+
+    /* An unconfirmed date is an algorithmic projection that the vendor says it
+       may revise, so it can move by days or not be a real date at all. Pulling
+       it toward neutral stops a projected "earnings in 3 days" from outscoring
+       a date the company has actually announced. */
+    if (!next.confirmed) score = 50 + (score - 50) * 0.45;
+
     inputs.push(input(
-      inWindow ? `Earnings in ${next.daysAway} days (inside window)` : "Earnings outside window",
-      next.daysAway, clamp(proximity * (0.55 + reliability * 0.45)), "days"));
+      !inWindow ? "Earnings outside window"
+        : next.confirmed ? `Earnings in ${next.daysAway} days (confirmed)`
+        : `Earnings in ~${next.daysAway} days (estimated date)`,
+      next.daysAway, score, "days"));
   }
 
   if (a.analysts?.upsidePercent !== null && a.analysts?.upsidePercent !== undefined) {
