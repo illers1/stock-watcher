@@ -18,7 +18,7 @@ import { buildCatalysts, countByKind, KINDS } from "./catalysts-model.mjs";
 
   var els = {};
   ["status", "refresh", "filters", "window", "kinds", "watchlist-only",
-   "timeline", "empty", "banner"].forEach(function (id) {
+   "timeline", "empty", "banner", "legend"].forEach(function (id) {
     els[id.replace(/-(\w)/g, function (m, c) { return c.toUpperCase(); })] =
       document.getElementById(id);
   });
@@ -101,23 +101,46 @@ import { buildCatalysts, countByKind, KINDS } from "./catalysts-model.mjs";
 
   function itemRow(i) {
     var watched = symbols.indexOf(i.symbol) !== -1;
+    var facts = (i.facts || []).filter(Boolean);
     return '<li class="cat-item">' +
       '<span class="cat-kind kind-' + i.kind + '">' + esc(KINDS[i.kind].label) + '</span>' +
       '<span class="cat-sym">' + esc(i.symbol) +
         (watched ? '<span class="cat-watched" title="On your watchlist">●</span>' : '') +
         '<span class="cat-name">' + esc(i.name || "") + '</span></span>' +
       '<span class="cat-what">' +
-        (i.url
-          ? '<a href="' + esc(i.url) + '" target="_blank" rel="noopener noreferrer">' + esc(i.title) + '</a>'
-          : esc(i.title)) +
-        (i.detail ? '<span class="cat-detail">' + esc(i.detail) + '</span>' : '') +
-        (i.confirmed ? '' : '<span class="cat-est" title="Not announced by the company">estimated</span>') +
+        '<span class="cat-title">' +
+          (i.url
+            ? '<a href="' + esc(i.url) + '" target="_blank" rel="noopener noreferrer">' + esc(i.title) + '</a>'
+            : esc(i.title)) +
+          (i.confirmed ? '' : '<span class="cat-est" title="Not announced by the company">estimated</span>') +
+        '</span>' +
+        (facts.length
+          ? '<span class="cat-facts">' + facts.map(function (f) {
+              return '<span>' + esc(f) + '</span>';
+            }).join("") + '</span>'
+          : '') +
+        (i.excerpt
+          ? '<blockquote class="cat-quote">' + esc(i.excerpt) +
+            (i.url ? ' <a href="' + esc(i.url) + '" target="_blank" rel="noopener noreferrer">filing</a>' : '') +
+            '</blockquote>'
+          : '') +
+        (i.note ? '<span class="cat-note">' + esc(i.note) + '</span>' : '') +
       '</span>' +
       '<span class="cat-act">' +
         (watched
           ? '<button class="linkbtn" data-remove="' + esc(i.symbol) + '">Remove</button>'
           : '<button class="btn btn-small" data-add="' + esc(i.symbol) + '">Watch</button>') +
       '</span></li>';
+  }
+
+  /* Every filter explained in place, rather than hidden in a tooltip. */
+  function renderLegend() {
+    els.legend.innerHTML = Object.keys(KINDS).map(function (k) {
+      var on = view.kinds.indexOf(k) !== -1;
+      return '<div class="legend-row' + (on ? "" : " legend-off") + '">' +
+        '<dt><span class="cat-kind kind-' + k + '">' + esc(KINDS[k].label) + '</span></dt>' +
+        '<dd>' + esc(KINDS[k].blurb) + '</dd></div>';
+    }).join("");
   }
 
   function render() {
@@ -142,6 +165,7 @@ import { buildCatalysts, countByKind, KINDS } from "./catalysts-model.mjs";
     }).join("");
 
     renderChips();
+    renderLegend();
   }
 
   function renderChips() {
@@ -207,5 +231,6 @@ import { buildCatalysts, countByKind, KINDS } from "./catalysts-model.mjs";
   els.window.value = String(view.days);
   els.watchlistOnly.checked = !!view.watchlistOnly;
   renderChips();
+  renderLegend();
   fetchAll();
 })();

@@ -35,7 +35,7 @@
 
   <form class="filters" id="filters" autocomplete="off">
     <label class="sel">
-      <span>Window</span>
+      <span>Window <em class="filter-why">how far ahead to look</em></span>
       <select id="window">
         <option value="7">Next 7 days</option>
         <option value="14">Next 14 days</option>
@@ -47,9 +47,12 @@
     <div class="kind-chips" id="kinds"></div>
     <label class="check">
       <input type="checkbox" id="watchlist-only">
-      <span>My watchlist only</span>
+      <span>My watchlist only
+        <em class="filter-why">hide everything you don't already hold</em></span>
     </label>
   </form>
+
+  <dl class="legend" id="legend"></dl>
 
   <p id="banner" class="banner" hidden></p>
 

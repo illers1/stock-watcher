@@ -23,7 +23,7 @@ const { default: earningsFn, config: earningsCfg, buildEarnings } =
   await import("../netlify/functions/earnings.mjs" + v);
 const { tradingDays } = await import("../netlify/lib/calendar.mjs" + v);
 const { toIso, longDateToIso, splitDisplayName, regulatoryDate, buildCatalysts,
-        countByKind, KINDS, REGULATORY_HORIZON_DAYS } =
+        countByKind, excerptAround, KINDS, REGULATORY_HORIZON_DAYS } =
   await import("../static/catalysts-model.mjs" + v);
 const { money, session, daysAway, parseRow, parseEarnings, summarise } =
   await import("../static/earnings-model.mjs" + v);
@@ -694,7 +694,8 @@ eq("advisory committee wording also matches",
 const catToday = new Date(2026, 8, 6);   // 6 Sep 2026
 const catBundle = {
   dividends: [{ symbol: "aubn", companyName: "Auburn National", dividend_Ex_Date: "9/10/2026",
-                payment_Date: "9/25/2026", dividend_Rate: 0.27 }],
+                payment_Date: "9/25/2026", record_Date: "9/10/2026", dividend_Rate: 0.27,
+                indicated_Annual_Dividend: 1.08, announcement_Date: "8/11/2026" }],
   splits: [{ symbol: "KEEX", name: "Some ETF", ratio: "4 : 1", executionDate: "9/10/2026" }],
   ipos: [{ proposedTickerSymbol: "PTT", companyName: "Siyata", expectedPriceDate: "9/08/2026",
            proposedExchange: "NASDAQ Capital", sharesOffered: "6,112,327" }],
@@ -734,7 +735,59 @@ const dupes = buildCatalysts({ splits: [
 eq("duplicates are collapsed", dupes.length, 1);
 
 eq("counts by kind", countByKind(built).earnings, 1);
+
+/* -- every filter carries its own explanation -- */
 eq("every kind has a label", Object.keys(KINDS).filter(k => !KINDS[k].label), []);
+eq("every kind has an explanation", Object.keys(KINDS).filter(k => !KINDS[k].blurb), []);
+check("explanations say something useful",
+      Object.values(KINDS).every(k => k.blurb.length > 60), "");
+
+/* -- each event carries detail beyond its title -- */
+check("every built event has facts",
+      built.every(i => Array.isArray(i.facts)), "");
+check("earnings detail names the session and the consensus",
+      built.find(i => i.kind === "earnings").facts.join(" ").includes("after the close") &&
+      built.find(i => i.kind === "earnings").facts.some(f => /consensus EPS/.test(f)), "");
+check("a dividend spells out the cash and the dates",
+      built.find(i => i.kind === "dividend").facts.some(f => /per share/.test(f)) &&
+      built.find(i => i.kind === "dividend").facts.some(f => /record date/.test(f)), "");
+eq("a forward split explains the ratio in words",
+   built.find(i => i.kind === "split").facts[0], "4 shares for every 1 held");
+check("a regulatory row explains what the date means",
+      built.find(i => i.kind === "regulatory").facts.some(f => /FDA must decide/.test(f)), "");
+check("a regulatory row quotes the filing",
+      /November 14, 2026/.test(built.find(i => i.kind === "regulatory").excerpt ?? ""), "");
+check("kinds with a caveat carry a note",
+      ["dividend", "split", "ipo", "regulatory"].every(k =>
+        built.find(i => i.kind === k)?.note), "");
+
+/* A reverse split must not be described as if it multiplied the shares. */
+const reverse = buildCatalysts(
+  { splits: [{ symbol: "RVS", ratio: "1 : 10", executionDate: "9/10/2026" }] },
+  {}, { today: catToday, days: 30 });
+check("a reverse split is described as one",
+      /reverse split/.test(reverse[0].facts.join(" ")), reverse[0].facts.join(" "));
+
+/* -- quoting the filing -- */
+eq("excerpt trims to whole words and marks elision",
+   excerptAround("alpha beta gamma PDUFA date is November 14, 2026 and more text here", "PDUFA", 20)
+     .startsWith("…"), true);
+eq("excerpt of nothing is nothing", excerptAround("", "PDUFA"), null);
+check("excerpt keeps the term it centred on",
+      excerptAround("some words PDUFA date November 14, 2026 trailing", "PDUFA", 30).includes("PDUFA"), "");
+
+/* The feeds write "N/A" where they have no value; rendering it verbatim
+   produced rows reading "reported N/A a year ago". */
+const withBlanks = buildCatalysts({}, {
+  AIV: { date: "2026-09-08", time: "time-not-supplied", name: "Apartment Investment",
+         fiscalQuarterEnding: "Jun/2026", lastYearReported: "N/A", epsForecast: "N/A" },
+}, { today: catToday, days: 30 });
+check("placeholder values are dropped, not rendered",
+      !withBlanks[0].facts.join(" ").toLowerCase().includes("n/a"),
+      withBlanks[0].facts.join(" · "));
+check("real values beside a placeholder survive",
+      withBlanks[0].facts.some(f => /quarter ending Jun\/2026/.test(f)),
+      withBlanks[0].facts.join(" · "));
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>
