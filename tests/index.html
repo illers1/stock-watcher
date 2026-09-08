@@ -28,11 +28,14 @@ const { parseFilingHref, extractOwnershipXml } = await import("../netlify/lib/in
 const { scoreShort, squeezeRisk, shortBand, SHORT_FACTORS, SHORT_PRESETS } =
   await import("../static/short-model.mjs" + v);
 const { loadWatchlist, DEFAULT_SYMBOLS } = await import("../static/watchlist.mjs" + v);
-const { SHORT_FILTERS, INSIDER_FILTERS, CATALYST_FILTERS, EARNINGS_FILTERS, renderFilterGuide } =
+const { SHORT_FILTERS, INSIDER_FILTERS, CATALYST_FILTERS, EARNINGS_FILTERS, MOVER_FILTERS,
+        renderFilterGuide } =
   await import("../static/filter-guide.mjs" + v);
 const { buildCandidate, weaknessScore, rankCandidates, SECTORS } =
   await import("../static/screen-model.mjs" + v);
-const { filterUniverse, CAP_BANDS, ORDERINGS } = await import("../netlify/lib/screener.mjs" + v);
+const { filterUniverse, CAP_BANDS, ORDERINGS, parseAsOf } = await import("../netlify/lib/screener.mjs" + v);
+const { explainMove, summariseCause, toIsoDate } = await import("../static/movers-model.mjs" + v);
+const { sectorMoves } = await import("../netlify/lib/movers.mjs" + v);
 const { toIso, longDateToIso, splitDisplayName, regulatoryDate, buildCatalysts,
         countByKind, excerptAround, KINDS, REGULATORY_HORIZON_DAYS } =
   await import("../static/catalysts-model.mjs" + v);
@@ -1040,6 +1043,7 @@ check("the sector list is populated", SECTORS.length > 5, String(SECTORS.length)
 /* ============ filter explanations ============ */
 
 const GUIDES = {
+  "movers.html": MOVER_FILTERS,
   "shorts.html": SHORT_FILTERS,
   "insiders.html": INSIDER_FILTERS,
   "catalysts.html": CATALYST_FILTERS,
@@ -1089,6 +1093,98 @@ const nasty = renderFilterGuide([{ name: "<script>x<\/script>", what: "a & b \"q
 check("guide output escapes markup", !nasty.includes("<script>x"), "");
 check("guide output escapes ampersands", nasty.includes("a &amp; b"), "");
 check("guide renders a details block", nasty.startsWith("\n    <details") || nasty.trim().startsWith("<details"), "");
+
+/* ============ daily movers ============ */
+
+/* The session is taken from the feed, never from the clock. Working back over
+   weekends alone captions Friday's moves as Monday's on every public holiday —
+   which is exactly what happened on Labor Day. */
+eq("parseAsOf reads the feed's own wording",
+   parseAsOf("Last price as of Sep 4, 2026"), "2026-09-04");
+eq("parseAsOf zero-pads", parseAsOf("Last price as of Jan 5, 2026"), "2026-01-05");
+eq("parseAsOf rejects nonsense", parseAsOf("recently"), null);
+eq("parseAsOf tolerates nothing", parseAsOf(null), null);
+
+eq("toIsoDate handles the slash form", toIsoDate("9/3/2026"), "2026-09-03");
+eq("toIsoDate handles the written form", toIsoDate("Sep 3, 2026"), "2026-09-03");
+eq("toIsoDate rejects junk", toIsoDate("yesterday"), null);
+
+/* Sector medians, which is what separates a company story from a sector one. */
+const moves = sectorMoves([
+  { sector: "Tech", changePercent: -1 }, { sector: "Tech", changePercent: -2 },
+  { sector: "Tech", changePercent: -30 }, { sector: "Energy", changePercent: 4 },
+  { sector: null, changePercent: 99 },
+]);
+eq("a sector is summarised", moves.Tech.count, 3);
+/* The median resists a single violent print in a way the mean does not. */
+eq("the median ignores one outlier", moves.Tech.median, -2);
+check("the mean does not", Math.abs(moves.Energy.mean - 4) < 1e-9, "");
+eq("rows without a sector are skipped", moves[null], undefined);
+
+/* -- assembling an explanation -- */
+const SESSION = "2026-09-04";
+const earningsPayload = (over) => ({ data: { earningsSurpriseTable: { rows: [
+  { dateReported: "9/3/2026", eps: 2.06, consensusForecast: "1.79", percentageSurprise: "15.08", ...over },
+]}}});
+const newsPayload = (rows) => ({ data: { rows } });
+const sectors = { Retail: { median: 0.4, count: 60 }, Energy: { median: -6.2, count: 40 } };
+
+const beatAndFell = explainMove(
+  { symbol: "X", changePercent: -17.4, sector: "Retail" },
+  { earnings: earningsPayload({}), news: newsPayload([]) }, sectors, SESSION);
+const earningsEvidence = beatAndFell.evidence.find((e) => e.kind === "results");
+check("results the day before are found",
+      /day before/.test(earningsEvidence.headline), earningsEvidence.headline);
+check("the surprise is spelled out",
+      /beating by 15.1%/.test(earningsEvidence.detail), earningsEvidence.detail);
+/* A beat alongside a fall is the case worth flagging, not smoothing over. */
+check("beating and falling is called out",
+      /Beat consensus and fell anyway/.test(earningsEvidence.contradiction ?? ""),
+      String(earningsEvidence.contradiction));
+eq("and the summary points at it", summariseCause(beatAndFell), "Results — but read the detail");
+
+const missedAndRose = explainMove(
+  { symbol: "Y", changePercent: 9, sector: "Retail" },
+  { earnings: earningsPayload({ eps: 0.2, consensusForecast: "0.5", percentageSurprise: "-60" }),
+    news: newsPayload([]) }, sectors, SESSION);
+check("missing and rising is called out too",
+      /Missed consensus and rose anyway/.test(
+        missedAndRose.evidence.find((e) => e.kind === "results").contradiction ?? ""), "");
+
+/* Results from months ago explain nothing about this session. */
+const staleResults = explainMove(
+  { symbol: "Z", changePercent: -12, sector: "Retail" },
+  { earnings: earningsPayload({ dateReported: "6/1/2026" }), news: newsPayload([]) }, sectors, SESSION);
+eq("stale results are not offered as a reason",
+   staleResults.evidence.some((e) => e.kind === "results"), false);
+eq("and with nothing else, it says so", staleResults.unexplained, true);
+eq("the summary says so as well", summariseCause(staleResults), "No public cause found");
+
+/* A stock that moved with its sector may have done nothing itself — the most
+   common false story told about a mover. */
+const sectorLed = explainMove(
+  { symbol: "OIL", changePercent: -6.5, sector: "Energy" },
+  { earnings: null, news: newsPayload([]) }, sectors, SESSION);
+const sectorEvidence = sectorLed.evidence.find((e) => e.kind === "sector");
+eq("a sector-wide move is treated as an explanation", sectorEvidence.strength, "strong");
+eq("and summarised as one", summariseCause(sectorLed), "Moved with its sector");
+check("a company-specific move is described as excess, not cause",
+      beatAndFell.evidence.find((e) => e.kind === "sector").strength === "context", "");
+
+/* Headlines from the right days only. */
+const withNews = explainMove(
+  { symbol: "N", changePercent: 12, sector: "Retail" },
+  { earnings: null, news: newsPayload([
+    { title: "Near the session", created: "Sep 4, 2026", url: "/x" },
+    { title: "Long before", created: "Jul 1, 2026", url: "/y" },
+  ]) }, sectors, SESSION);
+const newsEvidence = withNews.evidence.find((e) => e.kind === "coverage");
+eq("only headlines around the session count", newsEvidence.articles.length, 1);
+eq("and the url is made absolute", newsEvidence.articles[0].url, "https://www.nasdaq.com/x");
+eq("news alone is summarised as news", summariseCause(withNews), "In the news");
+
+eq("nothing at all is unexplained",
+   explainMove({ symbol: "Q", changePercent: 20 }, {}, {}, SESSION).unexplained, true);
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

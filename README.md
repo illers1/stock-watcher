@@ -319,6 +319,40 @@ gets looked at.
 A test walks each page's filter form and fails if a control has no entry, so a
 filter added later cannot quietly go undocumented.
 
+
+## Daily Movers
+
+`movers.html` lists the largest moves of the last completed session, gainers and
+losers side by side, and opens to show what was happening around each one.
+
+The evidence is ranked by how well it usually accounts for a large move:
+
+- **Results** — a company that reported hours earlier is nearly always the
+  reason, and the surprise against consensus says how much of one.
+- **Coverage** — headlines dated around the session. These describe a move at
+  least as often as they explain it, so they are offered as reading.
+- **Sector** — how the rest of the sector did, computed from every tradeable
+  stock in it. This is what says whether the company did anything at all: a
+  stock down 17% on a day its sector fell 0.3% is a company story; the same
+  stock down 8% while the sector fell 6% is not.
+
+Two things it does deliberately.
+
+**It says when it does not know.** Where no results, headlines or sector move
+turn up, the row says so instead of reaching for the nearest headline. Large
+moves with no visible cause are common in small companies and are not evidence
+of anything on their own.
+
+**It flags the cases that contradict themselves.** Lululemon fell 17% having
+beaten consensus by 15%; Guidewire fell 20% having beaten by 12%. Both rows say
+"Results — but read the detail" and explain that the reaction is to something
+other than the headline number, usually guidance. A tool that reported "beat
+expectations" against a 17% fall would be worse than useless.
+
+The session date comes from the data feed rather than the clock. Working back
+from today over weekends alone gets every public holiday wrong — the first
+version captioned Friday's moves as Monday's, because that Monday was Labor Day.
+
 ## Deploying it as a website
 
 The repository is ready to deploy — there is no build step and no dependencies

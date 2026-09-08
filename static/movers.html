@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Movers — Stock Watcher</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>⚡</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>Stock Watcher</h1>
+    <nav class="tabs" aria-label="Views">
+      <a href="index.html">Watchlist</a>
+      <a href="movers.html" aria-current="page">Movers</a>
+      <a href="earnings.html">Earnings</a>
+      <a href="catalysts.html">Catalysts</a>
+      <a href="insiders.html">Insiders</a>
+      <a href="shorts.html">Shorts</a>
+      <a href="group.html">Group</a>
+    </nav>
+  </div>
+  <div class="topbar-right">
+    <span id="status" class="status" role="status" aria-live="polite">Loading…</span>
+    <button id="refresh" class="btn" title="Reload (press R)">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <p class="lede">
+    The biggest moves of the last completed session, and what was happening around
+    them &mdash; results, headlines, and how the rest of the sector did. Open a row
+    for the detail.
+  </p>
+
+  <form class="filters" id="filters" autocomplete="off">
+    <label class="sel">
+      <span>Size <em class="filter-why">market-cap band</em></span>
+      <select id="cap">
+        <option value="any" selected>Any size</option>
+        <option value="small">Small cap</option>
+        <option value="mid">Mid cap</option>
+        <option value="large">Large cap</option>
+        <option value="mega">Mega cap</option>
+      </select>
+    </label>
+    <label class="sel">
+      <span>Sector <em class="filter-why">narrow the field</em></span>
+      <select id="sector"><option value="any">All sectors</option></select>
+    </label>
+    <label class="sel">
+      <span>Minimum price <em class="filter-why">exclude penny stocks</em></span>
+      <select id="minPrice">
+        <option value="1">$1+</option>
+        <option value="5" selected>$5+</option>
+        <option value="10">$10+</option>
+        <option value="30">$30+</option>
+      </select>
+    </label>
+    <label class="sel">
+      <span>Minimum volume <em class="filter-why">real trading, not a stale quote</em></span>
+      <select id="minVolume">
+        <option value="100000">100k+</option>
+        <option value="500000" selected>500k+</option>
+        <option value="2000000">2M+</option>
+      </select>
+    </label>
+    <label class="sel">
+      <span>How many <em class="filter-why">each side of the list</em></span>
+      <select id="count">
+        <option value="10">10</option>
+        <option value="15" selected>15</option>
+        <option value="25">25</option>
+      </select>
+    </label>
+  </form>
+
+  <p id="banner" class="banner" hidden></p>
+  <p id="coverage" class="coverage" hidden></p>
+
+  <div class="movers-grid">
+    <section>
+      <h2 class="movers-head up">Biggest gainers</h2>
+      <div id="gainers" class="mover-list"></div>
+    </section>
+    <section>
+      <h2 class="movers-head down">Biggest losers</h2>
+      <div id="losers" class="mover-list"></div>
+    </section>
+  </div>
+
+  <p id="empty" class="empty" hidden>Nothing matches these filters.</p>
+
+  <p class="disclaimer">
+    The evidence beside each move is what else was happening at the time, not a
+    demonstrated cause. A company that reported hours earlier is usually the
+    reason; headlines describe a move at least as often as they explain one; and
+    a stock that moved with its sector may have done nothing itself. Where
+    nothing turns up, it says so rather than reaching for the nearest headline.
+  </p>
+</main>
+
+<script type="module" src="movers.js"></script>
+</body>
+</html>

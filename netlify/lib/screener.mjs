@@ -59,14 +59,48 @@ async function get(url, doFetch, timeoutMs = 20000) {
   }
 }
 
-/** Every US-listed stock, with the fields cheap enough to fetch in bulk. */
+/** "Last price as of Sep 4, 2026" -> "2026-09-04". */
+const MONTHS = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+export function parseAsOf(label) {
+  const m = /([A-Za-z]{3})[a-z]*\s+(\d{1,2}),?\s+(\d{4})/.exec(String(label ?? ""));
+  if (!m) return null;
+  const month = MONTHS.indexOf(m[1].toLowerCase());
+  if (month === -1) return null;
+  return `${m[3]}-${String(month + 1).padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+}
+
+/**
+ * Every US-listed stock, with the fields cheap enough to fetch in bulk.
+ * The feed states which session it describes, which is worth taking over any
+ * guess from the clock: a weekday is not necessarily a trading day, and
+ * working back from "today" quietly captions Friday's moves as Monday's on
+ * every public holiday.
+ */
+export async function fetchSessionDate(doFetch = fetch) {
+  /* The bulk download carries an asOf key but leaves it null; the paged
+     variant fills it in. One row is enough to ask. */
+  const res = await get(`${SCREENER}?tableonly=true&limit=1&offset=0&download=false`, doFetch, 12000);
+  if (!res?.ok) return { sessionDate: null, asOfLabel: null };
+  try {
+    const body = await res.json();
+    const label = body?.data?.asof ?? body?.data?.asOf ?? null;
+    return { sessionDate: parseAsOf(label), asOfLabel: label };
+  } catch {
+    return { sessionDate: null, asOfLabel: null };
+  }
+}
+
 export async function fetchUniverse(doFetch = fetch) {
-  const res = await get(`${SCREENER}?tableonly=true&limit=8000&offset=0&download=true`, doFetch, 25000);
-  if (!res?.ok) return [];
+  const [res, session] = await Promise.all([
+    get(`${SCREENER}?tableonly=true&limit=8000&offset=0&download=true`, doFetch, 25000),
+    fetchSessionDate(doFetch),
+  ]);
+  if (!res?.ok) return { rows: [], sessionDate: null, asOfLabel: null };
   let body;
-  try { body = await res.json(); } catch { return []; }
+  try { body = await res.json(); } catch { return { rows: [], sessionDate: null, asOfLabel: null }; }
   const rows = body?.data?.rows ?? body?.data?.table?.rows ?? [];
-  return rows.map((r) => ({
+  const asOfLabel = body?.data?.asOf ?? body?.data?.asof ?? session.asOfLabel;
+  const mapped = rows.map((r) => ({
     symbol: String(r.symbol ?? "").toUpperCase(),
     name: r.name ?? null,
     price: money(r.lastsale),
@@ -77,6 +111,7 @@ export async function fetchUniverse(doFetch = fetch) {
     industry: r.industry || null,
     country: r.country || null,
   })).filter((r) => r.symbol);
+  return { rows: mapped, sessionDate: parseAsOf(asOfLabel) ?? session.sessionDate, asOfLabel };
 }
 
 /**
@@ -134,7 +169,7 @@ export async function enrich(symbols, doFetch = fetch) {
 
 /** The whole funnel, for one set of filters. */
 export async function runScreen(opts = {}, doFetch = fetch) {
-  const universe = await fetchUniverse(doFetch);
+  const { rows: universe, sessionDate, asOfLabel } = await fetchUniverse(doFetch);
   const matched = filterUniverse(universe, opts);
   const ordering = ORDERINGS[opts.order] ?? ORDERINGS.decliners;
   const ordered = matched.slice().sort(ordering.sort);
@@ -144,6 +179,7 @@ export async function runScreen(opts = {}, doFetch = fetch) {
 
   return {
     universeSize: universe.length,
+    sessionDate, asOfLabel,
     matched: matched.length,
     examined: slice.length,
     order: opts.order ?? "decliners",

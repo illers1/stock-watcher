@@ -168,3 +168,26 @@ export const EARNINGS_FILTERS = [
     what: "Free text matched against ticker and company name.",
   },
 ];
+
+export const MOVER_FILTERS = [
+  {
+    name: "Size",
+    what: "A market-capitalisation band. Worth changing depending on what you are after: the largest moves almost always belong to small companies, where a single contract or trial result is material, while a 5% move in a mega cap is a far bigger event in absolute terms.",
+  },
+  {
+    name: "Sector",
+    what: "Restricts the list to one sector. The sector's own move is shown against each stock regardless, since that is what says whether a company did anything itself.",
+  },
+  {
+    name: "Minimum price",
+    what: "Excludes low-priced stocks. Below a few dollars a one-cent tick is a percentage move, so those names dominate any ranking by percentage without anything having happened.",
+  },
+  {
+    name: "Minimum volume",
+    what: "Requires real trading behind the move. A stock that changed hands a few thousand times can print a large percentage on a single order, which is a quote rather than a move.",
+  },
+  {
+    name: "How many",
+    what: "How many names to list on each side, gainers and losers.",
+  },
+];

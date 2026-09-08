@@ -865,9 +865,37 @@ def screen_money(v):
         return None
 
 
+ASOF_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun",
+               "jul", "aug", "sep", "oct", "nov", "dec"]
+
+
+def parse_asof(label):
+    """'Last price as of Sep 4, 2026' -> '2026-09-04'."""
+    m = re.search(r"([A-Za-z]{3})[a-z]*\s+(\d{1,2}),?\s+(\d{4})", str(label or ""))
+    if not m:
+        return None
+    try:
+        month = ASOF_MONTHS.index(m.group(1).lower()) + 1
+    except ValueError:
+        return None
+    return "%s-%02d-%02d" % (m.group(3), month, int(m.group(2)))
+
+
 def fetch_universe():
+    """Returns (rows, sessionDate, label). The feed says which session it
+    describes; guessing from the clock captions Friday's moves as Monday's on
+    every public holiday."""
     data = raw_json("%s?tableonly=true&limit=8000&offset=0&download=true" % SCREENER_URL, timeout=25)
     rows = (data.get("data") or {}).get("rows") or []
+    # The bulk download carries an asOf key but leaves it null; the paged
+    # variant fills it in, and one row is enough to ask.
+    asof_label = (data.get("data") or {}).get("asOf") or (data.get("data") or {}).get("asof")
+    if not asof_label:
+        try:
+            probe = raw_json("%s?tableonly=true&limit=1&offset=0&download=false" % SCREENER_URL, timeout=12)
+            asof_label = (probe.get("data") or {}).get("asof") or (probe.get("data") or {}).get("asOf")
+        except Exception:
+            asof_label = None
     out = []
     for r in rows:
         sym = str(r.get("symbol") or "").upper()
@@ -883,11 +911,11 @@ def fetch_universe():
             "industry": r.get("industry") or None,
             "country": r.get("country") or None,
         })
-    return out
+    return out, parse_asof(asof_label), asof_label
 
 
 def run_screen(opts):
-    universe = fetch_universe()
+    universe, session_date, asof_label = fetch_universe()
     lo, hi = CAP_BANDS.get(opts["cap"], CAP_BANDS["any"])
     sector = opts["sector"].lower() if opts["sector"] and opts["sector"] != "any" else None
 
@@ -939,10 +967,81 @@ def run_screen(opts):
                 quotes[sym] = rec
 
     return {
-        "universeSize": len(universe), "matched": len(matched), "examined": len(sliced),
+        "universeSize": len(universe), "sessionDate": session_date, "asOfLabel": asof_label,
+        "matched": len(matched), "examined": len(sliced),
         "order": opts["order"], "orderLabel": labels.get(opts["order"], ""),
         "rows": sliced, "quotes": quotes,
     }
+
+
+
+# --------------------------------------------------------------------------
+# Daily movers. Mirrors netlify/lib/movers.mjs.
+# --------------------------------------------------------------------------
+
+def sector_moves(rows):
+    """Median move per sector: a handful of 40% prints would drag a mean."""
+    buckets = {}
+    for r in rows:
+        if r.get("changePercent") is None or not r.get("sector"):
+            continue
+        buckets.setdefault(r["sector"], []).append(r["changePercent"])
+    out = {}
+    for sector, values in buckets.items():
+        ordered = sorted(values)
+        out[sector] = {
+            "count": len(values),
+            "median": ordered[len(ordered) // 2],
+            "mean": sum(values) / len(values),
+        }
+    return out
+
+
+def fetch_movers(opts):
+    universe, session_date, asof_label = fetch_universe()
+    lo, hi = CAP_BANDS.get(opts["cap"], CAP_BANDS["any"])
+    sector = opts["sector"].lower() if opts["sector"] and opts["sector"] != "any" else None
+
+    tradeable = []
+    for r in universe:
+        cap = r["marketCap"]
+        if cap is None or cap < lo or cap > hi:
+            continue
+        if r["price"] is None or r["price"] < opts["minPrice"]:
+            continue
+        if r["volume"] is None or r["volume"] < opts["minVolume"]:
+            continue
+        if sector and str(r.get("sector") or "").lower() != sector:
+            continue
+        if re.search(r"[.^]", r["symbol"]) or r["changePercent"] is None:
+            continue
+        tradeable.append(r)
+
+    count = max(1, min(50, opts["count"]))
+    by_move = sorted(tradeable, key=lambda r: r["changePercent"], reverse=True)
+    return {
+        "sessionDate": session_date, "asOfLabel": asof_label,
+        "gainers": by_move[:count],
+        "losers": list(reversed(by_move[-count:])),
+        "sectors": sector_moves(tradeable),
+        "tradeable": len(tradeable),
+        "universeSize": len(universe),
+    }
+
+
+def fetch_mover_why(symbol):
+    enc = urllib.parse.quote(symbol)
+    def one(url):
+        try:
+            return raw_json(url, timeout=10)
+        except Exception:
+            return None
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        earnings = pool.submit(one, "%s/company/%s/earnings-surprise" % (NASDAQ, enc))
+        news = pool.submit(one, "%s/news/topic/articlebysymbol?%s" % (
+            NASDAQ, urllib.parse.urlencode(
+                {"q": "%s|stocks" % symbol, "offset": "0", "limit": "6", "fallback": "true"})))
+        return {"symbol": symbol, "earnings": earnings.result(), "news": news.result()}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -1095,6 +1194,42 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as exc:
                 return self.send_json({"rows": [], "quotes": {}, "filters": opts,
                                        "asOf": None, "error": "Screen failed (%s)" % type(exc).__name__})
+
+        if parsed.path == "/api/movers":
+            def mv_int(name, default):
+                try:
+                    return int((params.get(name) or [str(default)])[0])
+                except ValueError:
+                    return default
+            cap = (params.get("cap") or ["any"])[0]
+            opts = {
+                "cap": cap if cap in CAP_BANDS else "any",
+                "sector": (params.get("sector") or ["any"])[0],
+                "minPrice": max(0, mv_int("minPrice", 5)),
+                "minVolume": max(0, mv_int("minVolume", 500000)),
+                "count": mv_int("count", 15),
+            }
+            try:
+                result = fetch_movers(opts)
+                result.update({"filters": opts, "asOf": time.time(), "error": None})
+                return self.send_json(result)
+            except Exception as exc:
+                return self.send_json({"gainers": [], "losers": [], "sectors": {},
+                                       "filters": opts, "asOf": None,
+                                       "error": "Movers failed (%s)" % type(exc).__name__})
+
+        if parsed.path == "/api/mover-why":
+            symbol = (params.get("symbol") or [""])[0].strip().upper()
+            if not symbol or not SYMBOL_RE.match(symbol):
+                return self.send_json({"symbol": symbol, "earnings": None, "news": None,
+                                       "error": "A valid symbol is required"})
+            try:
+                payload = fetch_mover_why(symbol)
+                payload["error"] = None
+                return self.send_json(payload)
+            except Exception as exc:
+                return self.send_json({"symbol": symbol, "earnings": None, "news": None,
+                                       "error": "Lookup failed (%s)" % type(exc).__name__})
 
         if parsed.path == "/":
             self.path = "/index.html"
