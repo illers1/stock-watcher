@@ -842,8 +842,14 @@ SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks"
 SCREEN_BATCH = 70
 SCREEN_MAX_ENRICHED = 280
 
+# Floors applied on every window. Below them a listing is not really tradeable.
+# There is deliberately no volume floor: a thin day is not a reason to hide a
+# stock, and screening on volume removes the small names a screen exists to find.
+MIN_PRICE = 3
+MIN_MARKET_CAP = 25e6
+
 CAP_BANDS = {
-    "any": (0, float("inf")),
+    "any": (MIN_MARKET_CAP, float("inf")),
     "mega": (200e9, float("inf")),
     "large": (10e9, 200e9),
     "mid": (2e9, 10e9),
@@ -919,14 +925,14 @@ def run_screen(opts):
     lo, hi = CAP_BANDS.get(opts["cap"], CAP_BANDS["any"])
     sector = opts["sector"].lower() if opts["sector"] and opts["sector"] != "any" else None
 
+    lo = max(lo, MIN_MARKET_CAP)
+    min_price = max(MIN_PRICE, opts["minPrice"])
     matched = []
     for r in universe:
         cap = r["marketCap"]
         if cap is None or cap < lo or cap > hi:
             continue
-        if r["price"] is None or r["price"] < opts["minPrice"]:
-            continue
-        if r["volume"] is not None and r["volume"] < opts["minVolume"]:
+        if r["price"] is None or r["price"] < min_price:
             continue
         if sector and str(r.get("sector") or "").lower() != sector:
             continue
@@ -1002,14 +1008,14 @@ def fetch_movers(opts):
     lo, hi = CAP_BANDS.get(opts["cap"], CAP_BANDS["any"])
     sector = opts["sector"].lower() if opts["sector"] and opts["sector"] != "any" else None
 
+    lo = max(lo, MIN_MARKET_CAP)
+    min_price = max(MIN_PRICE, opts["minPrice"])
     tradeable = []
     for r in universe:
         cap = r["marketCap"]
         if cap is None or cap < lo or cap > hi:
             continue
-        if r["price"] is None or r["price"] < opts["minPrice"]:
-            continue
-        if r["volume"] is None or r["volume"] < opts["minVolume"]:
+        if r["price"] is None or r["price"] < min_price:
             continue
         if sector and str(r.get("sector") or "").lower() != sector:
             continue
@@ -1183,8 +1189,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "cap": cap if cap in CAP_BANDS else "smallmid",
                 "sector": (params.get("sector") or ["any"])[0],
                 "order": order if order in ("decliners", "smallest", "largest", "liquid") else "decliners",
-                "minPrice": max(0, as_int("minPrice", 5)),
-                "minVolume": max(0, as_int("minVolume", 300000)),
+                "minPrice": max(MIN_PRICE, as_int("minPrice", MIN_PRICE)),
                 "limit": min(SCREEN_MAX_ENRICHED, max(70, as_int("limit", SCREEN_MAX_ENRICHED))),
             }
             try:
@@ -1205,8 +1210,7 @@ class Handler(SimpleHTTPRequestHandler):
             opts = {
                 "cap": cap if cap in CAP_BANDS else "any",
                 "sector": (params.get("sector") or ["any"])[0],
-                "minPrice": max(0, mv_int("minPrice", 5)),
-                "minVolume": max(0, mv_int("minVolume", 500000)),
+                "minPrice": max(MIN_PRICE, mv_int("minPrice", MIN_PRICE)),
                 "count": mv_int("count", 15),
             }
             try:

@@ -13,7 +13,7 @@
    coincidence. A stock down 17% on a day its sector fell 0.3% is a company
    story; the same stock down 8% while the sector fell 6% is not. */
 
-import { fetchUniverse, filterUniverse, CAP_BANDS } from "./screener.mjs";
+import { fetchUniverse, filterUniverse, CAP_BANDS, MIN_PRICE } from "./screener.mjs";
 import { BROWSER_UA } from "./sources.mjs";
 
 const NASDAQ = "https://api.nasdaq.com/api";
@@ -55,10 +55,7 @@ export async function fetchMovers(opts = {}, doFetch = fetch) {
   const { rows: universe, sessionDate, asOfLabel } = await fetchUniverse(doFetch);
   const tradeable = filterUniverse(universe, {
     cap: CAP_BANDS[opts.cap] ? opts.cap : "any",
-    minPrice: opts.minPrice ?? 5,
-    // A stock that trades a few thousand shares can print a large percentage
-    // on almost no activity; that is a quote, not a move.
-    minVolume: opts.minVolume ?? 500000,
+    minPrice: opts.minPrice ?? MIN_PRICE,
     sector: opts.sector,
   }).filter((r) => r.changePercent !== null);
 

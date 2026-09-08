@@ -1,6 +1,7 @@
-/* GET /api/movers?cap=any&minPrice=5&minVolume=500000&count=15 */
+/* GET /api/movers?cap=any&minPrice=3&count=15 */
 
 import { fetchMovers } from "../lib/movers.mjs";
+import { MIN_PRICE } from "../lib/screener.mjs";
 
 const json = (body, headers = {}) =>
   new Response(JSON.stringify(body), {
@@ -16,8 +17,7 @@ export default async (req) => {
   const opts = {
     cap: p.get("cap") || "any",
     sector: p.get("sector") || "any",
-    minPrice: Math.max(0, int(p.get("minPrice"), 5)),
-    minVolume: Math.max(0, int(p.get("minVolume"), 500000)),
+    minPrice: Math.max(MIN_PRICE, int(p.get("minPrice"), MIN_PRICE)),
     count: int(p.get("count"), 15),
   };
   try {

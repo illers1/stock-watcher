@@ -49,7 +49,7 @@ import { mountFilterGuide, EARNINGS_FILTERS } from "./filter-guide.mjs";
   if (!prefs.preset) prefs.preset = "sprint";
 
   var filters = load(EARN_KEY, {
-    days: 5, session: "", minCap: 2e9, minPrice: 0, query: "",
+    days: 5, session: "", minCap: 25e6, minPrice: 3, query: "",
     sortKey: "date", sortDir: 1,
   });
 

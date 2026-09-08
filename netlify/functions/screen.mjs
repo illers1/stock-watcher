@@ -1,9 +1,9 @@
-/* GET /api/screen?cap=smallmid&sector=any&order=decliners&minPrice=5&minVolume=300000
+/* GET /api/screen?cap=smallmid&sector=any&order=decliners&minPrice=3
 
    The market-wide funnel: filter every US-listed stock on cheap fields, then
    enrich a bounded slice. Ranking lives in static/screen-model.mjs. */
 
-import { runScreen, CAP_BANDS, ORDERINGS, MAX_ENRICHED } from "../lib/screener.mjs";
+import { runScreen, CAP_BANDS, ORDERINGS, MAX_ENRICHED, MIN_PRICE } from "../lib/screener.mjs";
 
 const json = (body, headers = {}) =>
   new Response(JSON.stringify(body), {
@@ -26,8 +26,7 @@ export default async (req) => {
     cap: CAP_BANDS[p.get("cap")] ? p.get("cap") : "smallmid",
     sector: p.get("sector") || "any",
     order: ORDERINGS[p.get("order")] ? p.get("order") : "decliners",
-    minPrice: Math.max(0, int(p.get("minPrice"), 5)),
-    minVolume: Math.max(0, int(p.get("minVolume"), 300000)),
+    minPrice: Math.max(MIN_PRICE, int(p.get("minPrice"), MIN_PRICE)),
     limit: Math.min(MAX_ENRICHED, Math.max(70, int(p.get("limit"), MAX_ENRICHED))),
   };
   try {

@@ -15,12 +15,12 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
   var VIEW_KEY = "stockwatcher.movers.v1";
 
   var els = {};
-  ["status", "refresh", "filters", "cap", "sector", "minPrice", "minVolume", "count",
+  ["status", "refresh", "filters", "cap", "sector", "minPrice", "count",
    "gainers", "losers", "empty", "banner", "coverage"].forEach(function (id) {
     els[id] = document.getElementById(id);
   });
 
-  var view = load(VIEW_KEY, { cap: "any", sector: "any", minPrice: 5, minVolume: 500000, count: 15 });
+  var view = load(VIEW_KEY, { cap: "any", sector: "any", minPrice: 3, count: 15 });
   var symbols = loadWatchlist();
   var data = { gainers: [], losers: [], sectors: {} };
   var sessionDate = null;
@@ -69,7 +69,7 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
 
     var qs = new URLSearchParams({
       cap: view.cap, sector: view.sector,
-      minPrice: view.minPrice, minVolume: view.minVolume, count: view.count,
+      minPrice: view.minPrice, count: view.count,
     });
     return fetch("/api/movers?" + qs)
       .then(function (r) { return r.json(); })
@@ -118,8 +118,8 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
     els.coverage.innerHTML =
       "Moves from the session ending <strong>" + esc(when) + "</strong>. " +
       "<strong>" + d.tradeable.toLocaleString() + "</strong> of " +
-      d.universeSize.toLocaleString() + " US-listed stocks clear the price and volume " +
-      "floors and are ranked; the rest can print large percentages on almost no trading.";
+      d.universeSize.toLocaleString() + " US-listed stocks clear the $3 price and " +
+      "$25M market-value floors and are ranked.";
     els.coverage.hidden = false;
   }
 
@@ -189,7 +189,7 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
 
   /* ---------------- events ---------------- */
 
-  ["cap", "sector", "minPrice", "minVolume", "count"].forEach(function (key) {
+  ["cap", "sector", "minPrice", "count"].forEach(function (key) {
     els[key].addEventListener("change", function () {
       view[key] = els[key].value;
       save(VIEW_KEY, view);
@@ -231,7 +231,7 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
   mountFilterGuide(MOVER_FILTERS);
   els.sector.innerHTML = '<option value="any">All sectors</option>' +
     SECTORS.map(function (s) { return '<option value="' + esc(s) + '">' + esc(s) + '</option>'; }).join("");
-  ["cap", "sector", "minPrice", "minVolume", "count"].forEach(function (k) {
+  ["cap", "sector", "minPrice", "count"].forEach(function (k) {
     els[k].value = String(view[k]);
   });
   fetchMovers();

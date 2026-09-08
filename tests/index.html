@@ -33,7 +33,8 @@ const { SHORT_FILTERS, INSIDER_FILTERS, CATALYST_FILTERS, EARNINGS_FILTERS, MOVE
   await import("../static/filter-guide.mjs" + v);
 const { buildCandidate, weaknessScore, rankCandidates, SECTORS } =
   await import("../static/screen-model.mjs" + v);
-const { filterUniverse, CAP_BANDS, ORDERINGS, parseAsOf } = await import("../netlify/lib/screener.mjs" + v);
+const { filterUniverse, CAP_BANDS, ORDERINGS, parseAsOf, MIN_PRICE, MIN_MARKET_CAP } =
+  await import("../netlify/lib/screener.mjs" + v);
 const { explainMove, summariseCause, toIsoDate } = await import("../static/movers-model.mjs" + v);
 const { sectorMoves } = await import("../netlify/lib/movers.mjs" + v);
 const { toIso, longDateToIso, splitDisplayName, regulatoryDate, buildCatalysts,
@@ -981,23 +982,40 @@ const uni = [
   { symbol: "BIG",   marketCap: 500e9, price: 200, volume: 5e6 },
   { symbol: "MID",   marketCap: 5e9,   price: 40,  volume: 1e6, sector: "Technology" },
   { symbol: "SMALL", marketCap: 800e6, price: 12,  volume: 900e3, sector: "Health Care" },
-  { symbol: "PENNY", marketCap: 400e6, price: 2,   volume: 4e6 },
+  { symbol: "CHEAP", marketCap: 400e6, price: 2.5, volume: 4e6 },
+  { symbol: "TINY",  marketCap: 10e6,  price: 40,  volume: 2e6 },
   { symbol: "THIN",  marketCap: 3e9,   price: 30,  volume: 1000 },
   { symbol: "BRK.A", marketCap: 4e9,   price: 90,  volume: 2e6 },
 ];
 
-/* Size and liquidity are not preferences here: below them the borrow is scarce
-   or costly and the position cannot be closed without moving the price. */
+eq("the price floor is $3", MIN_PRICE, 3);
+eq("the market-value floor is $25M", MIN_MARKET_CAP, 25e6);
+
+/* THIN sits in this band on market value and now survives, because volume is
+   no longer a reason to exclude anything. */
 eq("a cap band is applied",
-   filterUniverse(uni, { cap: "smallmid" }).map(r => r.symbol).sort(), ["MID", "SMALL"]);
-eq("sub-$5 stocks are excluded",
-   filterUniverse(uni, { cap: "any" }).map(r => r.symbol).includes("PENNY"), false);
-eq("illiquid names are excluded",
-   filterUniverse(uni, { cap: "any" }).map(r => r.symbol).includes("THIN"), false);
+   filterUniverse(uni, { cap: "smallmid" }).map(r => r.symbol).sort(), ["MID", "SMALL", "THIN"]);
+eq("stocks under $3 are excluded",
+   filterUniverse(uni, { cap: "any" }).map(r => r.symbol).includes("CHEAP"), false);
+eq("companies under $25M are excluded",
+   filterUniverse(uni, { cap: "any" }).map(r => r.symbol).includes("TINY"), false);
+/* Volume is deliberately not filtered on. A thin day is not a reason to hide a
+   stock, and screening it out removes the small names a screen exists to find. */
+eq("a thinly traded stock is kept",
+   filterUniverse(uni, { cap: "any" }).map(r => r.symbol).includes("THIN"), true);
+eq("a stock with no volume reported is kept",
+   filterUniverse([{ symbol: "NOVOL", marketCap: 1e9, price: 20, volume: null }], { cap: "any" })
+     .map(r => r.symbol), ["NOVOL"]);
 eq("suffixed lines (warrants, units, preference) are excluded",
    filterUniverse(uni, { cap: "any" }).map(r => r.symbol).includes("BRK.A"), false);
 eq("a sector filter narrows further",
    filterUniverse(uni, { cap: "any", sector: "Health Care" }).map(r => r.symbol), ["SMALL"]);
+/* The floors are floors: a caller may ask for more, never less. */
+eq("a lower price request cannot go under the floor",
+   filterUniverse(uni, { cap: "any", minPrice: 0 }).map(r => r.symbol).includes("CHEAP"), false);
+eq("a higher price request is honoured",
+   filterUniverse(uni, { cap: "any", minPrice: 50 }).map(r => r.symbol), ["BIG"]);
+eq("the any band starts at the market-value floor", CAP_BANDS.any.min, MIN_MARKET_CAP);
 eq("every cap band has a label", Object.values(CAP_BANDS).filter(b => !b.label), []);
 eq("every ordering has a label and a sort",
    Object.values(ORDERINGS).filter(o => !o.label || typeof o.sort !== "function"), []);

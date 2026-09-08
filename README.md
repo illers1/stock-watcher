@@ -283,9 +283,11 @@ symbol and cannot be pointed at seven thousand companies, so it runs as a
 funnel:
 
 1. One request returns the whole market with sector, size, price and volume.
-2. That is filtered on the cheap fields — size, liquidity, price, sector —
-   which is what decides whether a short is *practical* rather than merely
-   justified. Sub-$5 prices, thin volume and warrant lines are excluded.
+2. That is filtered on the cheap fields — size, price, sector. Two floors apply
+   on every window: **$3 a share** and **$25M of market value**. Below those a
+   listing is not really tradeable — a one-cent tick is a percentage move, and
+   there is rarely enough company to analyse. Warrant and preference lines are
+   excluded too.
 3. A bounded slice of what survives is enriched through the batched quote feed,
    seventy symbols per request, and ranked on structural weakness.
 4. Only the names worth it get the full analysis, one click each.
@@ -450,3 +452,19 @@ rate-limited the add box falls back to a built-in list of common symbols, and
 any symbol can still be typed in by hand.
 
 Prices may be delayed. This is for information only, not investment advice.
+
+## Universal floors
+
+Every window applies the same two floors and nothing else:
+
+| Floor | Value | Why |
+| --- | --- | --- |
+| Price | $3 | below it a one-cent tick is a percentage move, and spreads can exceed the day's range |
+| Market value | $25M | below it there is rarely enough company to analyse |
+
+There is deliberately **no volume filter** anywhere. A thin day is not a reason
+to hide a stock, and screening on volume removes exactly the small names a
+screen exists to surface. The trade-off is real and worth knowing: without it,
+a large percentage move printed on a few hundred shares will appear in the
+movers list alongside a genuine one. Volume is shown on the row so the
+difference is visible.

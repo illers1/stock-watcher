@@ -75,7 +75,7 @@ export const SHORT_FILTERS = [
       ["Large cap", "$10B to $200B"],
       ["Mega cap", "above $200B — covered by dozens of analysts and rarely mispriced for long"],
     ],
-    note: "Sub-$5 prices and thinly traded lines are excluded regardless, along with warrants and preference lines.",
+    note: "Prices under $3, companies under $25M, and warrant and preference lines are excluded everywhere regardless of this setting. There is no volume floor: a thin day is not a reason to hide a stock.",
   },
   {
     name: "Sector",
@@ -157,11 +157,11 @@ export const EARNINGS_FILTERS = [
   },
   {
     name: "Minimum size",
-    what: "A market-capitalisation floor. Very small companies are often covered by one analyst or none, so the consensus estimate a surprise is measured against is unreliable or missing entirely.",
+    what: "Raises the market-capitalisation floor above the $25M minimum applied everywhere. Very small companies are often covered by one analyst or none, so the consensus estimate a surprise is measured against is unreliable or missing entirely.",
   },
   {
     name: "Minimum price",
-    what: "Excludes low-priced stocks, where a one-cent move is a large percentage move and the spread can be wider than the day's range.",
+    what: "Raises the price floor above the $3 minimum applied everywhere, where a one-cent move is a large percentage move and the spread can be wider than the day's range.",
   },
   {
     name: "Filter",
@@ -180,11 +180,7 @@ export const MOVER_FILTERS = [
   },
   {
     name: "Minimum price",
-    what: "Excludes low-priced stocks. Below a few dollars a one-cent tick is a percentage move, so those names dominate any ranking by percentage without anything having happened.",
-  },
-  {
-    name: "Minimum volume",
-    what: "Requires real trading behind the move. A stock that changed hands a few thousand times can print a large percentage on a single order, which is a quote rather than a move.",
+    what: "Raises the price floor above the $3 minimum applied everywhere. Below a few dollars a one-cent tick is a percentage move, so those names would dominate any ranking by percentage without anything having happened.",
   },
   {
     name: "How many",

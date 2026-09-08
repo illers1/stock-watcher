@@ -25,9 +25,18 @@ const QUOTE = "https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType
 export const BATCH_SIZE = 70;      // symbols the quote feed takes at once
 export const MAX_ENRICHED = 280;   // four batches: the examination budget
 
+/* Floors applied everywhere, on every window. Below them a listing is not
+   really tradeable: a sub-$3 price makes a one-cent tick a percentage move,
+   and under $25M of market value there is rarely enough company to analyse.
+   There is deliberately no volume floor — a thin day is not a reason to hide
+   a stock, and screening one out on volume hides exactly the small names a
+   screen exists to surface. */
+export const MIN_PRICE = 3;
+export const MIN_MARKET_CAP = 25e6;
+
 /** Market-cap bands, in the terms people actually use. */
 export const CAP_BANDS = {
-  any:    { label: "Any size",   min: 0,    max: Infinity },
+  any:    { label: "Any size",   min: MIN_MARKET_CAP, max: Infinity },
   mega:   { label: "Mega cap",   min: 200e9, max: Infinity },
   large:  { label: "Large cap",  min: 10e9,  max: 200e9 },
   mid:    { label: "Mid cap",    min: 2e9,   max: 10e9 },
@@ -121,14 +130,14 @@ export async function fetchUniverse(doFetch = fetch) {
  */
 export function filterUniverse(rows, opts = {}) {
   const band = CAP_BANDS[opts.cap] ?? CAP_BANDS.any;
-  const minPrice = opts.minPrice ?? 5;
-  const minVolume = opts.minVolume ?? 300000;
+  // A caller may ask for more than the floor, never less.
+  const minPrice = Math.max(MIN_PRICE, opts.minPrice ?? MIN_PRICE);
+  const minCap = Math.max(MIN_MARKET_CAP, band.min);
   const sector = opts.sector && opts.sector !== "any" ? String(opts.sector).toLowerCase() : null;
 
   return (rows ?? []).filter((r) => {
-    if (r.marketCap === null || r.marketCap < band.min || r.marketCap > band.max) return false;
+    if (r.marketCap === null || r.marketCap < minCap || r.marketCap > band.max) return false;
     if (r.price === null || r.price < minPrice) return false;
-    if (r.volume !== null && r.volume < minVolume) return false;
     if (sector && String(r.sector ?? "").toLowerCase() !== sector) return false;
     // Symbols carrying suffixes are warrants, units and preference lines.
     if (/[.\^]/.test(r.symbol)) return false;
