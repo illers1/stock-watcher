@@ -36,7 +36,7 @@ const { buildCandidate, weaknessScore, rankCandidates, SECTORS } =
 const { filterUniverse, CAP_BANDS, ORDERINGS, parseAsOf, MIN_PRICE, MIN_MARKET_CAP } =
   await import("../netlify/lib/screener.mjs" + v);
 const { explainMove, summariseCause, toIsoDate, periodWindow, pricePath, sessionMoves,
-        parseHistory, classifyHeadline, excerpt, PERIODS } =
+        parseHistory, classifyHeadline, excerpt, isSubject, PERIODS } =
   await import("../static/movers-model.mjs" + v);
 const { sectorMoves, performanceMap, applyPeriod, PERIOD_COLUMNS } =
   await import("../netlify/lib/movers.mjs" + v);
@@ -1283,6 +1283,114 @@ const otherCompany = explainMove(
 eq("a piece about other companies is not a cause", otherCompany.unexplained, true);
 eq("and no coverage block is built from it",
    otherCompany.evidence.some((e) => e.kind === "coverage"), false);
+
+/* The lead symbol is often blank, so the related list has to be read as well:
+   a piece filed only under another company is about that company, whatever the
+   feed was asked for. This is how an M-tron story turned up under PSIG. */
+const blankLead = explainMove(
+  { symbol: "PSIG", changePercent: 44, sector: "Retail" },
+  { news: newsPayload([
+      { title: "M-tron Industries, Inc. (MPTI) Stock Sinks As Market Gains",
+        created: "Sep 4, 2026", url: "/m", primarysymbol: "", related_symbols: ["mpti|stocks"] }]) },
+  sectors, SESSION);
+eq("a piece filed under another company alone is dropped", blankLead.unexplained, true);
+eq("even when the feed names no lead symbol",
+   blankLead.evidence.some((e) => e.kind === "coverage"), false);
+
+/* A piece filed under this company among others is still evidence about it. */
+const alsoTagged = explainMove(
+  { symbol: "S", changePercent: 30, sector: "Retail" },
+  { news: newsPayload([
+      { title: "S agrees to buy Rival Inc for $224 million", created: "Sep 4, 2026", url: "/s",
+        primarysymbol: "", related_symbols: ["s|stocks", "rival|stocks"] }]) },
+  sectors, SESSION);
+eq("but one filed under it is kept", alsoTagged.verdict.kind, "deal");
+
+/* A digest filed under fifteen companies names this one without being about
+   it — "New FDA Drug Approvals - August 2026" was being offered as the reason
+   Moderna moved. Genuine single-company news carries one to three tags. */
+const digest = explainMove(
+  { symbol: "MRNA", changePercent: 25, sector: "Health Care" },
+  { news: newsPayload([
+      { title: "New FDA Drug Approvals - August 2026", created: "Sep 4, 2026", url: "/f",
+        primarysymbol: "",
+        related_symbols: ["bmy|stocks","bntx|stocks","gild|stocks","jazz|stocks","lnth|stocks",
+                          "mrna|stocks","pfe|stocks","mrk|stocks"] }]) },
+  sectors, SESSION);
+eq("a digest of a whole month is not this company's news", digest.unexplained, true);
+/* Both sides of a merger, though, are tagged on the same story. */
+const twoSided = explainMove(
+  { symbol: "S", changePercent: 30, sector: "Retail" },
+  { news: newsPayload([
+      { title: "Buyer Corp to acquire S in $4 billion deal", created: "Sep 4, 2026", url: "/t",
+        primarysymbol: "buyer", related_symbols: ["buyer|stocks", "s|stocks"] }]) },
+  sectors, SESSION);
+eq("a two-sided deal story still counts", twoSided.verdict.kind, "deal");
+
+/* A fund's flows are not the news of the companies it holds. */
+const fundFlow = explainMove(
+  { symbol: "MRNA", changePercent: 25, sector: "Health Care" },
+  { news: newsPayload([
+      { title: "Invesco S&P 500 Equal Weight ETF Experiences Big Inflow",
+        created: "Sep 4, 2026", url: "/e", primarysymbol: "rsp",
+        related_symbols: ["rsp|etf", "mrna|stocks", "zbra|stocks", "crl|stocks"] }]) },
+  sectors, SESSION);
+eq("an ETF flow story is not company news", fundFlow.unexplained, true);
+/* And naming an index is not joining one. */
+eq("an ETF named after an index is not an index change",
+   classifyHeadline({ title: "Invesco S&P 500 Equal Weight ETF Experiences Big Inflow" }).key, "general");
+eq("actually joining one is",
+   classifyHeadline({ title: "Acme will join the S&P 500 before the open on Monday" }).key, "index");
+
+/* A headline that only reports the move explains nothing, so it is never
+   dressed up as a named cause — and the panel never shows a reason with no
+   words under it. */
+const reportsMove = explainMove(
+  { symbol: "GNRC", name: "Generac Holdings Inc.", changePercent: 12, sector: "Retail" },
+  { news: newsPayload([
+      { title: "Why Generac Stock Soared Today", created: "Sep 4, 2026", url: "/g",
+        primarysymbol: "gnrc", related_symbols: ["gnrc|stocks"] }]) },
+  sectors, SESSION);
+eq("a move report is not presented as a catalyst", reportsMove.verdict.kind, "coverage");
+check("and it still says something", (reportsMove.verdict.text ?? "").length > 60,
+      String(reportsMove.verdict.text));
+check("with the article to open", /Generac/.test(reportsMove.verdict.source?.title ?? ""), "");
+eq("summarised plainly", summariseCause(reportsMove), "In the news");
+
+/* Whose story is it? With several companies tagged and no lead named, the
+   title decides — this is how a piece about Techne became Moderna's reason. */
+eq("a headline about another company is not this company's",
+   isSubject({ title: "Why Is Techne (TECH) Down 0.1% Since Last Earnings Report?",
+               primary: false, names: ["tech", "mrna"] }, "MRNA", "Moderna Inc. Common Stock"), false);
+eq("one naming this company is",
+   isSubject({ title: "Moderna's Cancer Vaccine Win Fuels Broad Push", primary: null,
+               names: ["mrna", "mrk"] }, "MRNA", "Moderna Inc. Common Stock"), true);
+eq("as is one naming its symbol",
+   isSubject({ title: "Buyer Corp to acquire MRNA in $4 billion deal", primary: false,
+               names: ["buyer", "mrna"] }, "MRNA", "Moderna Inc. Common Stock"), true);
+eq("a piece filed under nobody else is kept",
+   isSubject({ title: "Anything at all", primary: null, names: [] }, "MRNA", "Moderna"), true);
+
+const techne = explainMove(
+  { symbol: "MRNA", name: "Moderna Inc. Common Stock", changePercent: 25, sector: "Health Care" },
+  { news: newsPayload([
+      { title: "Why Is Techne (TECH) Down 0.1% Since Last Earnings Report?",
+        created: "Sep 4, 2026", url: "/t", primarysymbol: "",
+        related_symbols: ["tech|stocks", "mrna|stocks"] }]) },
+  sectors, SESSION);
+eq("so another company's earnings piece is not Moderna's reason", techne.unexplained, true);
+
+/* Coverage naming no event has to be about this company, not merely mention it. */
+const mentioned = explainMove(
+  { symbol: "MRNA", changePercent: 25, sector: "Health Care" },
+  { news: newsPayload([
+      { title: "Amgen vs. Moderna: Which Healthcare Stock Is Better Value",
+        created: "Sep 4, 2026", url: "/c", primarysymbol: "amgn",
+        related_symbols: ["amgn|stocks", "mrna|stocks"] }]) },
+  sectors, SESSION);
+eq("a comparison piece is not offered as a reason", mentioned.unexplained, true);
+check("though it stays in the reading list",
+      mentioned.evidence.find((e) => e.kind === "coverage")?.articles.length === 1, "");
 
 /* A listicle mentioning forty tickers explains nothing about any of them. */
 eq("roundups are recognised",

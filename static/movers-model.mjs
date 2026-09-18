@@ -155,7 +155,9 @@ export const CATALYSTS = [
     re: /\b(lawsuit|sued|indict|investigation|probe|subpoena|SEC charges|fraud|short[- ]seller|short report|recall|antitrust)\b/i, dir: "down",
     why: "An investigation, a short-seller report or a recall puts a cost of unknown size on the company, and markets price that uncertainty quickly." },
   { key: "index", label: "Index inclusion", short: "Index change", base: 60,
-    re: /\b(S&P 500|S&P MidCap 400|S&P SmallCap 600|Russell (1000|2000|3000)|Nasdaq-100|added to the .{0,20}index|join(s|ing)? the .{0,20}index)\b/i, dir: "up",
+    /* The index's name alone is not enough: every ETF is named after one and
+       every market wrap quotes one. It takes the joining or the leaving. */
+    re: /\b((added to|joins|joining|will join|to join|inclusion in|inclusion into|removed from|dropped from|deleted from)\s+(the\s+)?(S&P 500|S&P MidCap 400|S&P SmallCap 600|Russell (1000|2000|3000)|Nasdaq-100|[A-Z][\w&.\- ]{2,24}index)|index (inclusion|addition|rebalanc))/i, dir: "up",
     why: "Index funds have to buy a stock when it joins an index, which lifts demand in the days around the change." },
   { key: "analyst", label: "Analyst rating change", short: "Analyst call", base: 55,
     re: /\b(upgrade[sd]?|downgrade[sd]?|price target|initiat(es|ed|ing) coverage|outperform|underperform|overweight|underweight)\b/i,
@@ -226,6 +228,23 @@ export function classifyHeadline(article, move = null) {
 /* Abbreviations that end in a full stop without ending the sentence — company
    suffixes above all, which is where most of these descriptions would break. */
 const ABBREV_RE = /(?:^|\s)(?:[A-Z]|Inc|Corp|Co|Ltd|LLC|LP|plc|Jr|Sr|Dr|Mr|Mrs|Ms|St|No|vs|etc|approx|U\.S|U\.K)\.$/;
+
+/**
+ * Whether a headline is about this company rather than merely tagged with it.
+ * The feed often files a piece under several companies and names no lead, and
+ * then the title is what says whose story it is: "Why Is Techne (TECH) Down
+ * Since Last Earnings Report?" is not news about Moderna.
+ */
+export function isSubject(article, symbol, companyName) {
+  if (article?.primary === true) return true;          // filed under this company
+  if ((article?.names?.length ?? 0) <= 1) return true;  // filed under nobody else
+  const title = String(article?.title ?? "");
+  const sym = String(symbol ?? "").toUpperCase();
+  // Short symbols are matched exactly, so "T" does not match a stray capital.
+  if (sym && new RegExp(`\\b${sym.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(title)) return true;
+  const word = String(companyName ?? "").trim().split(/[\s,]+/)[0] ?? "";
+  return word.length >= 4 && new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i").test(title);
+}
 
 /** The first whole sentence of a description, for quoting. */
 export function excerpt(text, max = 220) {
@@ -348,11 +367,28 @@ export function explainMove(mover, why, sectors, sessionDate, opts = {}) {
     date: toIsoDate(r.created),
     description: r.description ?? null,
     primary: r.primarysymbol ? String(r.primarysymbol).toLowerCase() === symbol : null,
-    related: Array.isArray(r.related_symbols) ? r.related_symbols.length : null,
-    // "nvda|stocks" — the symbols the publisher tagged the piece with.
-    names: Array.isArray(r.related_symbols)
-      ? r.related_symbols.map((t) => String(t).split("|")[0].toLowerCase())
-      : null,
+    /* Every company the piece is filed under: the lead symbol and the related
+       ones, which arrive as "nvda|stocks". The lead is often blank, so the two
+       have to be read together — a story filed only under "mpti|stocks" with no
+       lead symbol is about M-tron whatever the feed was asked for. */
+    /* A piece led by an ETF is about the fund's flows; the companies it holds
+       are listed, not written about. "Invesco S&P 500 Equal Weight ETF
+       Experiences Big Inflow" is not news about Moderna. */
+    fundLead: (() => {
+      const lead = r.primarysymbol ? String(r.primarysymbol).toLowerCase() : null;
+      if (!lead || lead === symbol) return false;
+      const tags = Array.isArray(r.related_symbols) ? r.related_symbols : [];
+      return tags.some((t) => {
+        const [sym, type] = String(t).split("|");
+        return sym.toLowerCase() === lead && String(type).toLowerCase() === "etf";
+      });
+    })(),
+    names: [
+      r.primarysymbol ? String(r.primarysymbol).toLowerCase() : null,
+      ...(Array.isArray(r.related_symbols)
+        ? r.related_symbols.map((t) => String(t).split("|")[0].toLowerCase())
+        : []),
+    ].filter(Boolean),
     url: r.url ? (String(r.url).startsWith("http") ? r.url : "https://www.nasdaq.com" + r.url) : null,
   })).filter((a) => a.title);
 
@@ -362,19 +398,31 @@ export function explainMove(mover, why, sectors, sessionDate, opts = {}) {
   const near = [];
   for (const a of articles) {
     if (!a.date || !lo || a.date < lo || a.date > hi) continue;
-    // Tagged for other companies and not for this one: not evidence about it.
-    if (a.primary === false && a.names && !a.names.includes(symbol)) { setAside++; continue; }
+    /* Filed under companies, none of them this one: not evidence about it.
+       Asked about a symbol it does not cover, the feed answers with other
+       companies' stories, and they read as if they were about this one. */
+    if (a.names.length && !a.names.includes(symbol)) { setAside++; continue; }
+    /* Filed under a crowd of companies: a digest of every FDA approval last
+       month, or a market wrap. It names this one, but it is not about it.
+       Genuine single-company news carries one to three tags; a merger carries
+       both sides. */
+    if (a.names.length > 5) { setAside++; continue; }
+    if (a.fundLead) { setAside++; continue; }
     const c = classifyHeadline(a, move);
     if (c.key === "noise" || c.key === "roundup") { setAside++; continue; }
     const d = distance(a.date);
     let score = c.base + (d === 0 ? 15 : d === 1 ? 10 : d !== null && d <= 3 ? 4 : 0);
-    // An article about a dozen companies is weaker evidence about any one.
-    if (a.primary === false || (a.related !== null && a.related > 3)) score = Math.round(score * 0.6);
+    // An article about a dozen companies is weaker evidence about any one, and
+    // so is one this company is merely mentioned in rather than the subject of.
+    if (a.primary === false || a.names.length > 3) score = Math.round(score * 0.6);
     // Days from the session the price actually moved on; a headline from the
     // other end of the window is background, not the trigger.
     if (d !== null && d >= 4) score = Math.round(score * 0.6);
     const tagged = { ...a, tag: c.label ?? null, kind: c.key, score, excerpt: excerpt(a.description) };
     near.push(tagged);
+    /* Only a piece that is about this company can be offered as the reason it
+       moved. One that merely lists it stays in the reading list below. */
+    if (!isSubject(a, mover?.symbol, mover?.name)) continue;
     candidates.push({ kind: "headline", score, days: d, catalyst: c, article: tagged });
   }
   near.sort((a, b) => b.score - a.score);
@@ -434,7 +482,11 @@ function decide({ candidates, sectorLed, sector, sectorMedian, path, period }) {
     ? "The move built up gradually rather than on one day, which fits a change in sentiment better than a single event."
     : null;
 
-  if (best && best.score >= (best.kind === "results" ? 50 : 30)) {
+  /* A named event carries an explanation of why that kind of news moves a
+     price. A headline that merely reports the move carries none, and is
+     offered as reading rather than as a reason. */
+  const named = best?.kind === "results" || !!best?.catalyst?.why;
+  if (best && named && best.score >= (best.kind === "results" ? 50 : 30)) {
     if (best.kind === "results") {
       const how = best.surprise !== null && best.surprise !== undefined
         ? `${best.beat ? "beat" : "missed"} expectations by ${Math.abs(best.surprise).toFixed(1)}%`
@@ -482,11 +534,16 @@ function decide({ candidates, sectorLed, sector, sectorMedian, path, period }) {
   }
 
   if (best && best.score >= 20) {
+    const reportsMove = best.catalyst?.key === "move";
     return {
       confidence: "possible", kind: "coverage", short: "In the news",
-      title: "Covered in the news, but no clear catalyst",
-      text: "Nothing dated around the move names a specific event — no results, deal, trial result or financing. " +
-        "The company was written about, though; the closest headline is below, and the article itself may give a reason.",
+      title: reportsMove ? "Written up as a move, with no event named" : "Covered in the news, but no clear catalyst",
+      text: (reportsMove
+        ? "The closest headline reports the move itself rather than naming what caused it. Pieces like this " +
+          "usually give the reason in the first paragraph, so it is worth opening — but the feed gives nothing " +
+          "dated around the move that names an event."
+        : "Nothing dated around the move names a specific event — no results, deal, trial result or financing. " +
+          "The company was written about, though; the closest headline is below, and the article itself may give a reason."),
       source: best.article,
       note: pathNote,
     };
