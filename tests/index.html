@@ -1342,6 +1342,50 @@ eq("an ETF named after an index is not an index change",
 eq("actually joining one is",
    classifyHeadline({ title: "Acme will join the S&P 500 before the open on Monday" }).key, "index");
 
+/* Every part of the panel has to belong to the row it is under. The payload
+   is checked as a whole, and each feed again by the company it names. */
+const wrongEnvelope = explainMove(
+  { symbol: "PSIG", name: "PS International", changePercent: 44, sector: "Retail" },
+  { symbol: "MPTI", earnings: earningsPayload({}),
+    news: newsPayload([{ title: "M-tron secures $4.5 million defence order",
+                         created: "Sep 4, 2026", url: "/m" }]) },
+  sectors, SESSION);
+eq("a payload for another company is used for nothing", wrongEnvelope.unexplained, true);
+eq("not even its results", wrongEnvelope.evidence.some((e) => e.kind === "results"), false);
+eq("nor its headlines", wrongEnvelope.evidence.some((e) => e.kind === "coverage"), false);
+
+/* The envelope can be right while one feed inside answers about someone else. */
+const wrongEarnings = explainMove(
+  { symbol: "PSIG", changePercent: -20, sector: "Retail" },
+  { symbol: "PSIG",
+    earnings: { data: { symbol: "mpti", earningsSurpriseTable: { rows: [
+      { dateReported: "9/3/2026", eps: 2.06, consensusForecast: "1.79", percentageSurprise: "15.08" },
+    ]}}} },
+  sectors, SESSION);
+eq("results naming another company are ignored",
+   wrongEarnings.evidence.some((e) => e.kind === "results"), false);
+const rightEarnings = explainMove(
+  { symbol: "MPTI", changePercent: -20, sector: "Retail" },
+  { symbol: "MPTI",
+    earnings: { data: { symbol: "mpti", earningsSurpriseTable: { rows: [
+      { dateReported: "9/3/2026", eps: 2.06, consensusForecast: "1.79", percentageSurprise: "15.08" },
+    ]}}} },
+  sectors, SESSION);
+eq("and its own results are still read",
+   rightEarnings.evidence.some((e) => e.kind === "results"), true);
+
+/* The price path is drawn from the closes, so those are checked too. */
+const wrongHistory = explainMove(
+  { symbol: "PSIG", changePercent: 35.6, sector: "Retail" },
+  { symbol: "PSIG", history: { data: { symbol: "MPTI", tradesTable: { rows: [
+      { date: "09/02/2026", close: "$13.50" }, { date: "09/03/2026", close: "$13.60" },
+      { date: "09/04/2026", close: "$13.70" }, { date: "09/01/2026", close: "$10.05" },
+      { date: "08/31/2026", close: "$10.10" }, { date: "08/28/2026", close: "$10.00" },
+  ]}}} },
+  sectors, SESSION, { period: "week" });
+eq("closes belonging to another company locate nothing",
+   wrongHistory.evidence.some((e) => e.kind === "path"), false);
+
 /* A headline that only reports the move explains nothing, so it is never
    dressed up as a named cause — and the panel never shows a reason with no
    words under it. */
@@ -1389,14 +1433,18 @@ const mentioned = explainMove(
         related_symbols: ["amgn|stocks", "mrna|stocks"] }]) },
   sectors, SESSION);
 eq("a comparison piece is not offered as a reason", mentioned.unexplained, true);
-check("though it stays in the reading list",
-      mentioned.evidence.find((e) => e.kind === "coverage")?.articles.length === 1, "");
+eq("and it is not listed under this company either",
+   mentioned.evidence.some((e) => e.kind === "coverage"), false);
 
 /* A listicle mentioning forty tickers explains nothing about any of them. */
 eq("roundups are recognised",
    classifyHeadline({ title: "7 Best AI Stocks To Buy Now" }).key, "roundup");
 eq("so are market wraps",
    classifyHeadline({ title: "Stocks Rally as Crude Prices and Bond Yields Fall" }).key, "roundup");
+eq("daily insider digests are roundups too",
+   classifyHeadline({ title: "Thursday 9/10 Insider Buying Report: ALMS, PRTS" }).key, "roundup");
+eq("as are sector round-ups",
+   classifyHeadline({ title: "Biotech Stocks Gain Ground: PDS Biotech, Clene, Indaptus" }).key, "roundup");
 eq("and multi-company pieces",
    classifyHeadline({ title: "Biotech Stocks In Focus: Aethlon, Tiziana, Capricor" }).key, "roundup");
 /* A market wrap that mentions the S&P 500 in its body is not an index change. */

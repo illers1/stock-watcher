@@ -366,13 +366,27 @@ turn up, the row says so instead of reaching for the nearest headline. Large
 moves with no visible cause are common in small companies and are not evidence
 of anything on their own.
 
-**It throws out headlines that are not about the company.** Asked about a
-symbol it has no coverage for, the news feed answers with general market
-stories anyway — the same list for every such symbol, which reads as if it were
-about the stock you asked about. Articles are matched against the companies the
-publisher tagged them with, so a market wrap and a piece about five other
-biotechs are set aside. So are law-firm class-action notices, which follow a
-fall rather than cause one, and stock listicles.
+**Nothing appears under a ticker unless it belongs to it.** This is the rule
+the window is most careful about, because breaking it is worse than saying
+nothing: an M-tron story once appeared under PSIG.
+
+Asked about a symbol it has no coverage for, the news feed answers with other
+companies' stories anyway — the same list for every such symbol, which reads as
+if it were about the stock you asked about. So a piece has to earn its place.
+Filed under companies and not this one, it is dropped. Filed under more than
+five, it is a digest rather than a story. Led by an ETF, it is a fund's flows
+and not the news of what the fund holds. Filed under several with no lead
+named, the title decides whose story it is. What fails those tests is not shown
+at all — not as the reason, and not in the reading list either. Law-firm
+class-action notices, market wraps, daily insider digests and stock listicles
+go the same way, being things that follow a move rather than explain one.
+
+The other feeds are checked too, rather than taken on trust: results and daily
+closes are read only when the payload names this company, so a feed that
+answers about someone else contributes nothing rather than something wrong.
+And because explanations are fetched per row while the list can be reloaded
+underneath them, a reply that arrives after the period has been switched is
+discarded instead of being folded into rows it was not about.
 
 **It flags the cases that contradict themselves.** Lululemon fell 17% having
 beaten consensus by 15%; Guidewire fell 20% having beaten by 12%. Both rows say

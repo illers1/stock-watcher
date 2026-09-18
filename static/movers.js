@@ -30,6 +30,10 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
   var explanations = {};   // symbol -> assembled explanation
   var pending = {};
   var loading = false;
+  /* Bumped on every load. A reply to the previous period's request must not be
+     folded into this one's rows: the symbol would be right and the move, the
+     sector and the window all wrong. */
+  var generation = 0;
 
   function load(key, fallback) {
     try {
@@ -67,6 +71,8 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
   function fetchMovers() {
     if (loading) return Promise.resolve();
     loading = true;
+    generation += 1;
+    var gen = generation;
     setStatus("Loading…");
     els.banner.hidden = true;
 
@@ -77,6 +83,7 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
     return fetch("/api/movers?" + qs)
       .then(function (r) { return r.json(); })
       .then(function (d) {
+        if (gen !== generation) return;
         if (d.error) { els.banner.textContent = d.error; els.banner.hidden = false; }
         data = d;
         explanations = {};
@@ -96,15 +103,23 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
 
   function explain(sym) {
     if (explanations[sym] || pending[sym]) return Promise.resolve();
+    var gen = generation;
     pending[sym] = fetch("/api/mover-why?symbol=" + encodeURIComponent(sym))
       .then(function (r) { return r.json(); })
       .then(function (why) {
+        // The list may have been reloaded under a different period since.
+        if (gen !== generation) return;
         var mover = findMover(sym);
+        if (!mover || why.symbol !== sym) return;
         explanations[sym] = explainMove(mover, why, data.sectors, sessionDate,
           { period: period, market: data.market });
       })
-      .catch(function () { explanations[sym] = { evidence: [], unexplained: true, articles: [] }; })
-      .then(function () { delete pending[sym]; render(); });
+      .catch(function () {
+        if (gen === generation) {
+          explanations[sym] = { evidence: [], unexplained: true, articles: [] };
+        }
+      })
+      .then(function () { delete pending[sym]; if (gen === generation) render(); });
     return pending[sym];
   }
 

@@ -182,7 +182,7 @@ export const CATALYSTS = [
 /* Law-firm solicitations follow a fall; they never cause one. */
 const NOISE_RE = /\b(class action|investors who (lost|purchased)|shareholder alert|investor alert|deadline (alert|reminder)|lead plaintiff|rosen law|pomerantz|bronstein|levi & korsinsky|faruqi|glancy|bragar|kessler topaz|securities fraud lawsuit)\b/i;
 /* Listicles and market wraps mention hundreds of tickers in passing. */
-const ROUNDUP_RE = /\b(\d+ (best|top|cheap|dividend|growth|ai|stocks)|stocks to (buy|watch|sell)|should you buy|is it time to|better buy|pre-?market movers|midday movers|market (today|wrap|update|close)|stock market news|top (gainers|losers|movers)|stocks? in focus|(stocks|shares|markets|futures) (rally|tumble|slip|climb|edge|push|slide|mixed|higher|lower)|closing bell|what to watch|things to know)\b/i;
+const ROUNDUP_RE = /\b(\d+ (best|top|cheap|dividend|growth|ai|stocks)|stocks to (buy|watch|sell)|should you buy|is it time to|better buy|pre-?market movers|midday movers|market (today|wrap|update|close)|stock market news|top (gainers|losers|movers)|stocks? in focus|(stocks|shares|markets|futures) (rally|tumble|slip|climb|edge|push|slide|mixed|higher|lower)|closing bell|what to watch|things to know|insider (buying|selling) report|(stocks|shares) (gain|lose|give up) ground|stocks (gain|lose)\b)\b/i;
 /* Headlines that report the move itself. The reason may be in the body. */
 const MOVE_RE = /\b(why .{0,60}(stock|shares)|(stock|shares) (is |are )?(soar|jump|surg|rall|plung|tumbl|sink|slid|drop|fall|climb|skyrocket|crash|pop|spike|rocket|dive)\w*|(soar|jump|surg|plung|tumbl|sink|skyrocket|crash|spike|rocket)(s|ed|ing)\b)/i;
 
@@ -274,6 +274,20 @@ export function excerpt(text, max = 220) {
  * @param opts.market  the median move of every ranked stock over the period
  */
 export function explainMove(mover, why, sectors, sessionDate, opts = {}) {
+  /* Everything in the panel is read out of one payload, so the payload is
+     checked once: if it is not this company's, none of it belongs in this row.
+     Each part is checked again by the symbol it names, because the feeds are
+     asked for one company and do not always answer about it. */
+  const ticker = String(mover?.symbol ?? "").toUpperCase();
+  const answersFor = (part) => {
+    const named = part?.data?.symbol;
+    return !named || !ticker || String(named).toUpperCase() === ticker;
+  };
+  const wrongCompany = why?.symbol && ticker && String(why.symbol).toUpperCase() !== ticker;
+  const record = wrongCompany ? {} : (why ?? {});
+  const earningsOf = answersFor(record.earnings) ? record.earnings : null;
+  const historyOf = answersFor(record.history) ? record.history : null;
+
   const period = periodKey(opts.period);
   const P = PERIODS[period];
   const window = periodWindow(period, sessionDate);
@@ -283,7 +297,7 @@ export function explainMove(mover, why, sectors, sessionDate, opts = {}) {
 
   /* Where in the period it happened. A single session is the whole move for a
      daily mover; over a week or a month it says which headlines can matter. */
-  const path = period === "day" ? null : pricePath(why?.history, window, move);
+  const path = period === "day" ? null : pricePath(historyOf, window, move);
   const keyDates = period === "day" ? (sessionDate ? [sessionDate] : []) : (path?.keyDates ?? []);
   const distance = (iso) => {
     if (!iso) return null;
@@ -325,7 +339,7 @@ export function explainMove(mover, why, sectors, sessionDate, opts = {}) {
   }
 
   /* Results, and how far they landed from consensus. */
-  const rows = why?.earnings?.data?.earningsSurpriseTable?.rows ?? [];
+  const rows = earningsOf?.data?.earningsSurpriseTable?.rows ?? [];
   const latest = rows[0];
   const reported = latest ? toIsoDate(latest.dateReported) : null;
   const inWindow = reported && window.start &&
@@ -359,8 +373,8 @@ export function explainMove(mover, why, sectors, sessionDate, opts = {}) {
   }
 
   /* Headlines, classified and weighed by how close they sit to the move. */
-  const symbol = String(mover?.symbol ?? "").toLowerCase();
-  const articles = (why?.news?.data?.rows ?? []).map((r) => ({
+  const symbol = ticker.toLowerCase();
+  const articles = (record.news?.data?.rows ?? []).map((r) => ({
     title: r.title ?? null,
     publisher: r.publisher ?? null,
     created: r.created ?? null,
@@ -418,11 +432,12 @@ export function explainMove(mover, why, sectors, sessionDate, opts = {}) {
     // Days from the session the price actually moved on; a headline from the
     // other end of the window is background, not the trigger.
     if (d !== null && d >= 4) score = Math.round(score * 0.6);
+    /* Nothing goes in this row unless it is about this company — not as the
+       reason, and not in the reading list either. A piece that merely lists it
+       among others belongs under whichever company it is actually about. */
+    if (!isSubject(a, mover?.symbol, mover?.name)) { setAside++; continue; }
     const tagged = { ...a, tag: c.label ?? null, kind: c.key, score, excerpt: excerpt(a.description) };
     near.push(tagged);
-    /* Only a piece that is about this company can be offered as the reason it
-       moved. One that merely lists it stays in the reading list below. */
-    if (!isSubject(a, mover?.symbol, mover?.name)) continue;
     candidates.push({ kind: "headline", score, days: d, catalyst: c, article: tagged });
   }
   near.sort((a, b) => b.score - a.score);
