@@ -16,6 +16,7 @@
 
 import { fetchUniverse, filterUniverse, CAP_BANDS, MIN_PRICE } from "./screener.mjs";
 import { BROWSER_UA } from "./sources.mjs";
+import { fetchFilings } from "./filings.mjs";
 
 const NASDAQ = "https://api.nasdaq.com/api";
 const SCANNER = "https://scanner.tradingview.com/america/scan";
@@ -145,15 +146,18 @@ export async function fetchMovers(opts = {}, doFetch = fetch) {
   };
 }
 
-/** The evidence for one mover: did they report, what is being written, and on
-    which days the price actually moved. Enough history and headlines are
-    fetched to cover a monthly move as well as a daily one. */
-export async function fetchWhy(symbol, doFetch = fetch) {
+/** The evidence for one mover: did they report, what is being written, what
+    they have filed, and on which days the price actually moved. Enough history
+    and headlines are fetched to cover a monthly move as well as a daily one;
+    filings are read from `since`, which the page sets a few days before the
+    window it is explaining. */
+export async function fetchWhy(symbol, doFetch = fetch, since = null) {
   const enc = encodeURIComponent(symbol);
   const to = new Date();
   const from = new Date(to.getTime() - HISTORY_DAYS * 864e5);
   const iso = (d) => d.toISOString().slice(0, 10);
-  const [earnings, news, history] = await Promise.all([
+  const filingsSince = since ?? iso(new Date(to.getTime() - 10 * 864e5));
+  const [earnings, news, history, filings] = await Promise.all([
     get(`${NASDAQ}/company/${enc}/earnings-surprise`, doFetch)
       .then((r) => (r?.ok ? r.json() : null)).catch(() => null),
     /* Asked about a symbol it has no coverage for, this feed answers with
@@ -164,6 +168,7 @@ export async function fetchWhy(symbol, doFetch = fetch) {
       .then((r) => (r?.ok ? r.json() : null)).catch(() => null),
     get(`${NASDAQ}/quote/${enc}/historical?assetclass=stocks&fromdate=${iso(from)}&todate=${iso(to)}&limit=60`, doFetch)
       .then((r) => (r?.ok ? r.json() : null)).catch(() => null),
+    fetchFilings(symbol, filingsSince, doFetch).catch(() => null),
   ]);
-  return { symbol, earnings, news, history };
+  return { symbol, earnings, news, history, filings };
 }

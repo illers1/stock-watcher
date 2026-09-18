@@ -344,6 +344,18 @@ The reading is chosen from:
 
 - **Results** — a company that reported just before the move is nearly always
   the reason, and the surprise against consensus says how much of one.
+- **SEC filings** — the deeper source. Most of a day's biggest movers are small
+  companies with nothing written about them at all, but they are obliged to
+  disclose: a material agreement, an offering, a restructuring, a delisting
+  notice, a 13D from an activist. The filing is read by its 8-K item numbers,
+  which the SEC fixes and which say what kind of event it is before a word is
+  read, and then by the document itself — the attached press release where
+  there is one, or the first "On <date>, the Company ..." sentence where there
+  is not. Foreign issuers file 6-Ks, which have no item numbers but usually
+  head each section with the same title an 8-K item carries, so those are read
+  too. Each filing is dated by the session it first reached the market in: one
+  accepted after the 4pm close belongs to the next day, and one over a weekend
+  to Monday.
 - **A catalyst in the headlines** — a takeover, a trial result or approval, a
   guidance change, a share sale, an index inclusion, an analyst call, a legal
   problem. Each kind carries a line saying *why that sort of news moves a
@@ -361,10 +373,20 @@ The reading is chosen from:
 
 Four things it does deliberately.
 
-**It says when it does not know.** Where no results, catalyst or sector move
-turn up, the row says so instead of reaching for the nearest headline. Large
-moves with no visible cause are common in small companies and are not evidence
-of anything on their own.
+**It says when it does not know — and what it searched.** Where no results,
+filing, catalyst or sector move turn up, the row says so instead of reaching for
+the nearest headline, and says whether the SEC was actually checked. On a
+typical day that is still well over half the list: the largest moves belong to
+small companies, many of which have nothing filed and nothing written about
+them. Large moves with no visible cause are common in small companies and are
+not evidence of anything on their own.
+
+A few things are read carefully because they mislead otherwise. "Determined
+not to proceed with the previously announced offering" is the opposite of an
+offering, and a weekly "did not sell any shares under its at-the-market
+program" is not one at all. A headline saying a stock jumped cannot explain a
+day it fell; it is about some other session. And "Material Definitive
+Agreement" is an 8-K item title, not the language of a takeover.
 
 **Nothing appears under a ticker unless it belongs to it.** This is the rule
 the window is most careful about, because breaking it is worse than saying

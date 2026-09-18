@@ -1077,7 +1077,146 @@ def fetch_movers(opts):
     }
 
 
-def fetch_mover_why(symbol):
+# SEC filings behind a move. Mirrors netlify/lib/filings.mjs; what a filing
+# means is decided in static/movers-model.mjs.
+SEC_TICKER_MAP = "https://www.sec.gov/files/company_tickers.json"
+MATERIAL_FORMS = {
+    "8-K", "6-K", "425",
+    "424B1", "424B2", "424B3", "424B4", "424B5", "424B7",
+    "S-1", "F-1", "S-3", "F-3", "EFFECT",
+    "SC 13D", "SC 13D/A", "SCHEDULE 13D", "SCHEDULE 13D/A",
+    "SC TO-T", "SC TO-C", "SC 14D9", "DEFM14A",
+    "25", "25-NSE", "10-Q", "10-K", "20-F", "40-F", "NT 10-Q", "NT 10-K",
+}
+READ_TEXT = {"8-K", "6-K", "425", "SC TO-C", "SC 14D9"}
+MAX_FILING_TEXTS = 4
+FILING_TEXT_CHARS = 6000
+_ticker_cache = {"at": 0.0, "map": None}
+_ticker_lock = threading.Lock()
+# The SEC asks for no more than ten requests a second from one client.
+_sec_lock = threading.Lock()
+_sec_last = [0.0]
+SEC_GAP = 0.12
+
+
+def sec_get(url, timeout=10):
+    with _sec_lock:
+        wait = SEC_GAP - (time.time() - _sec_last[0])
+        if wait > 0:
+            time.sleep(wait)
+        _sec_last[0] = time.time()
+    req = urllib.request.Request(url, headers={"User-Agent": SEC_UA, "Accept": "*/*"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", "replace")
+
+
+def sec_cik(symbol):
+    sym = symbol.upper()
+    with _ticker_lock:
+        if not _ticker_cache["map"] or time.time() - _ticker_cache["at"] > 86400:
+            try:
+                data = json.loads(sec_get(SEC_TICKER_MAP, 15))
+                _ticker_cache["map"] = {str(v["ticker"]).upper(): str(v["cik_str"]).zfill(10)
+                                        for v in data.values()}
+                _ticker_cache["at"] = time.time()
+            except Exception:
+                pass
+        found = (_ticker_cache["map"] or {}).get(sym)
+    if found:
+        return found
+    try:
+        return resolve_cik(sym)
+    except Exception:
+        return None
+
+
+_ENTITIES = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'", "nbsp": " ",
+             "rsquo": "’", "lsquo": "‘", "rdquo": "”", "ldquo": "“",
+             "ndash": "–", "mdash": "—", "bull": "•", "reg": "®",
+             "trade": "™", "copy": "©", "hellip": "…"}
+
+
+def filing_text(html_doc, limit=FILING_TEXT_CHARS):
+    t = re.sub(r"(?is)<(script|style|head)\b.*?</\1>", " ", html_doc or "")
+    # Inline XBRL carries its tagged facts in a hidden header; they are data, not prose.
+    t = re.sub(r"(?is)<ix:header\b.*?</ix:header>", " ", t)
+    t = re.sub(r"(?is)<div[^>]*display:\s*none[^>]*>.*?</div>", " ", t)
+    t = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d|table|center)>", "\n", t)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = re.sub(r"(?i)&#x([0-9a-f]+);", lambda m: chr(int(m.group(1), 16)), t)
+    t = re.sub(r"&#(\d+);", lambda m: chr(int(m.group(1))), t)
+    t = re.sub(r"(?i)&([a-z]+);", lambda m: _ENTITIES.get(m.group(1).lower(), m.group(0)), t)
+    t = re.sub(r"[ \t ]+", " ", t)
+    t = re.sub(r" *\n[ \n]*", "\n", t)
+    return t.strip()[:limit]
+
+
+def fetch_filings(symbol, since):
+    empty = {"symbol": symbol, "cik": None, "filings": []}
+    cik = sec_cik(symbol)
+    if not cik:
+        return empty
+    try:
+        recent = (json.loads(sec_get("https://data.sec.gov/submissions/CIK%s.json" % cik, 12))
+                  .get("filings") or {}).get("recent") or {}
+    except Exception:
+        return dict(empty, cik=cik)
+    forms = recent.get("form") or []
+    col = lambda k, i: (recent.get(k) or [None] * len(forms))[i]
+    filings = []
+    for i, form in enumerate(forms):
+        date = col("filingDate", i) or ""
+        if since and date and date < since:
+            break  # newest first
+        if form not in MATERIAL_FORMS:
+            continue
+        acc = str(col("accessionNumber", i) or "")
+        folder = "https://www.sec.gov/Archives/edgar/data/%d/%s" % (int(cik), acc.replace("-", ""))
+        filings.append({
+            "form": form, "date": date,
+            "accepted": col("acceptanceDateTime", i),
+            "items": [s.strip() for s in str(col("items", i) or "").split(",") if s.strip()],
+            "description": col("primaryDocDescription", i) or None,
+            "url": "%s/%s-index.htm" % (folder, acc),
+            "_folder": folder, "_primary": col("primaryDocument", i),
+            "text": None, "exhibit": False,
+        })
+
+    def read(f):
+        doc = f["_primary"]
+        try:
+            idx = json.loads(sec_get(f["_folder"] + "/index.json", 8))
+            names = [str(it.get("name")) for it in ((idx.get("directory") or {}).get("item") or [])]
+            ex = next((n for n in names
+                       if re.search(r"(^|[^a-z])(ex|exhibit)[-_ ]?99", n, re.I)
+                       and re.search(r"\.(htm|html|txt)$", n, re.I)), None)
+            if ex:
+                doc, f["exhibit"] = ex, True
+        except Exception:
+            pass
+        if doc:
+            try:
+                f["text"] = filing_text(sec_get("%s/%s" % (f["_folder"], doc), 9))
+            except Exception:
+                pass
+
+    to_read = [f for f in filings if f["form"] in READ_TEXT][:MAX_FILING_TEXTS]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(read, to_read))
+    for f in filings:
+        f.pop("_folder", None)
+        f.pop("_primary", None)
+    return {"symbol": symbol, "cik": cik, "filings": filings}
+
+
+def _safe(fn, *args):
+    try:
+        return fn(*args)
+    except Exception:
+        return None
+
+
+def fetch_mover_why(symbol, since=None):
     enc = urllib.parse.quote(symbol)
     def one(url):
         try:
@@ -1085,8 +1224,9 @@ def fetch_mover_why(symbol):
         except Exception:
             return None
     today = datetime.date.today()
-    since = today - datetime.timedelta(days=HISTORY_DAYS)
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    history_from = today - datetime.timedelta(days=HISTORY_DAYS)
+    filings_since = since or (today - datetime.timedelta(days=10)).isoformat()
+    with ThreadPoolExecutor(max_workers=4) as pool:
         earnings = pool.submit(one, "%s/company/%s/earnings-surprise" % (NASDAQ, enc))
         news = pool.submit(one, "%s/news/topic/articlebysymbol?%s" % (
             NASDAQ, urllib.parse.urlencode(
@@ -1096,10 +1236,12 @@ def fetch_mover_why(symbol):
                  "fallback": "false"})))
         history = pool.submit(one, "%s/quote/%s/historical?%s" % (
             NASDAQ, enc, urllib.parse.urlencode({
-                "assetclass": "stocks", "fromdate": since.isoformat(),
+                "assetclass": "stocks", "fromdate": history_from.isoformat(),
                 "todate": today.isoformat(), "limit": "60"})))
+        filings = pool.submit(lambda: _safe(fetch_filings, symbol, filings_since))
         return {"symbol": symbol, "earnings": earnings.result(),
-                "news": news.result(), "history": history.result()}
+                "news": news.result(), "history": history.result(),
+                "filings": filings.result()}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -1280,16 +1422,19 @@ class Handler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/mover-why":
             symbol = (params.get("symbol") or [""])[0].strip().upper()
+            since = (params.get("since") or [""])[0]
+            since = since if re.match(r"^\d{4}-\d{2}-\d{2}$", since) else None
             if not symbol or not SYMBOL_RE.match(symbol):
                 return self.send_json({"symbol": symbol, "earnings": None, "news": None,
-                                       "history": None, "error": "A valid symbol is required"})
+                                       "history": None, "filings": None,
+                                       "error": "A valid symbol is required"})
             try:
-                payload = fetch_mover_why(symbol)
+                payload = fetch_mover_why(symbol, since)
                 payload["error"] = None
                 return self.send_json(payload)
             except Exception as exc:
                 return self.send_json({"symbol": symbol, "earnings": None, "news": None,
-                                       "history": None, "error": "Lookup failed (%s)" % type(exc).__name__})
+                                       "history": None, "filings": None, "error": "Lookup failed (%s)" % type(exc).__name__})
 
         if parsed.path == "/":
             self.path = "/index.html"

@@ -5,7 +5,7 @@
    gets glanced at rather than read, and each explanation costs two upstream
    requests, so fetching forty of them up front would be waste. */
 
-import { explainMove, summariseCause, PERIODS, periodKey, periodWindow, shortDate }
+import { explainMove, summariseCause, PERIODS, periodKey, periodWindow, shortDate, addDays }
   from "./movers-model.mjs";
 import { mountFilterGuide, MOVER_FILTERS } from "./filter-guide.mjs";
 import { SECTORS } from "./screen-model.mjs";
@@ -68,8 +68,11 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
 
   /* ---------------- data ---------------- */
 
+  /* A new load supersedes one in flight rather than being dropped: changing the
+     period while the last one is still loading has to load the new period, not
+     leave the list showing the old one under the new label. The generation
+     count is what keeps the superseded reply from landing. */
   function fetchMovers() {
-    if (loading) return Promise.resolve();
     loading = true;
     generation += 1;
     var gen = generation;
@@ -87,6 +90,7 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
         if (d.error) { els.banner.textContent = d.error; els.banner.hidden = false; }
         data = d;
         explanations = {};
+        pending = {};
         period = periodKey(d.period || view.period);
         /* The feed states the session it describes; a guess from the clock
            gets every public holiday wrong. */
@@ -94,17 +98,32 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
         renderCoverage(d);
         renderHeads();
         render();
+        /* Rows stay open across a reload, but their explanations were for the
+           old list. Ask again for any still open and still listed, rather than
+           leaving an open panel with nothing in it. */
+        document.querySelectorAll(".mover[open]").forEach(function (el) {
+          if (el.dataset.symbol) explain(el.dataset.symbol);
+        });
         setStatus((d.gainers || []).length + (d.losers || []).length + " movers · " +
           new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
       })
-      .catch(function (err) { setStatus("Load failed — " + err.message, true); })
-      .then(function () { loading = false; });
+      .catch(function (err) {
+        if (gen === generation) setStatus("Load failed — " + err.message, true);
+      })
+      .then(function () { if (gen === generation) loading = false; });
   }
 
   function explain(sym) {
-    if (explanations[sym] || pending[sym]) return Promise.resolve();
     var gen = generation;
-    pending[sym] = fetch("/api/mover-why?symbol=" + encodeURIComponent(sym))
+    // A failed lookup is shown, not kept: opening the row again tries again.
+    if ((explanations[sym] && !explanations[sym].failed) ||
+        (pending[sym] && pending[sym].gen === gen)) return Promise.resolve();
+    /* Filings are read from a few days before the window, so one filed on the
+       Friday before a Monday move is still found. */
+    var win = periodWindow(period, sessionDate);
+    var qs = "symbol=" + encodeURIComponent(sym) +
+      (win.start ? "&since=" + addDays(win.start, -5) : "");
+    var request = fetch("/api/mover-why?" + qs)
       .then(function (r) { return r.json(); })
       .then(function (why) {
         // The list may have been reloaded under a different period since.
@@ -116,11 +135,20 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
       })
       .catch(function () {
         if (gen === generation) {
-          explanations[sym] = { evidence: [], unexplained: true, articles: [] };
+          explanations[sym] = {
+            failed: true, evidence: [], unexplained: true, articles: [],
+            verdict: { confidence: "unclear", short: "Lookup failed",
+                       title: "Could not look this up just now",
+                       text: "One of the sources did not answer. Close the row and open it again to retry, or press Refresh." },
+          };
         }
       })
-      .then(function () { delete pending[sym]; if (gen === generation) render(); });
-    return pending[sym];
+      .then(function () {
+        if (pending[sym] && pending[sym].gen === gen) delete pending[sym];
+        if (gen === generation) render();
+      });
+    pending[sym] = { gen: gen, request: request };
+    return request;
   }
 
   function findMover(sym) {
@@ -191,7 +219,7 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
   }
 
   function evidenceHtml(e) {
-    if (e.kind === "coverage") {
+    if (e.kind === "coverage" || e.kind === "filings") {
       return '<li class="ev ev-' + e.strength + '"><b>' + esc(e.headline) + '</b>' +
         (e.detail ? '<span class="ev-detail">' + esc(e.detail) + '</span>' : "") +
         '<ul class="ev-articles">' + (e.articles || []).map(articleHtml).join("") + '</ul></li>';

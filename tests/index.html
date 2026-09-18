@@ -36,8 +36,11 @@ const { buildCandidate, weaknessScore, rankCandidates, SECTORS } =
 const { filterUniverse, CAP_BANDS, ORDERINGS, parseAsOf, MIN_PRICE, MIN_MARKET_CAP } =
   await import("../netlify/lib/screener.mjs" + v);
 const { explainMove, summariseCause, toIsoDate, periodWindow, pricePath, sessionMoves,
-        parseHistory, classifyHeadline, excerpt, isSubject, PERIODS } =
+        parseHistory, classifyHeadline, excerpt, isSubject, PERIODS,
+        filingSession, pressHeadline, itemSummary, interpretFiling, FILING_ITEMS,
+        itemsFromTitles, bodySummary, reportedDirection } =
   await import("../static/movers-model.mjs" + v);
+const { filingText, MATERIAL_FORMS, READ_TEXT } = await import("../netlify/lib/filings.mjs" + v);
 const { sectorMoves, performanceMap, applyPeriod, PERIOD_COLUMNS } =
   await import("../netlify/lib/movers.mjs" + v);
 const { toIso, longDateToIso, splitDisplayName, regulatoryDate, buildCatalysts,
@@ -1469,6 +1472,215 @@ eq("an excerpt reads past a company suffix",
 eq("an excerpt stops at the first sentence",
    excerpt("(RTTNews) - Acme said it will buy Beta. More detail followed later."),
    "Acme said it will buy Beta.");
+
+/* ============ SEC filings: the deeper source ============ */
+
+/* Most of the day's biggest movers have nothing written about them. What they
+   have is an obligation to disclose, and the filing is often on record before
+   any article. These fixtures are shaped on real filings from Sep 2026. */
+const FRI = "2026-09-18";
+const filingsFor = (symbol, filings) => ({ symbol, cik: "0000000001", filings });
+
+/* When the market first saw it. Most 8-Ks land after the 4pm close. */
+eq("a filing accepted after the close reaches the next session",
+   filingSession({ date: "2026-09-18", accepted: "2026-09-17T21:32:08.000Z" }).date, "2026-09-18");
+eq("and is marked as after the close",
+   filingSession({ accepted: "2026-09-17T21:32:08.000Z" }).afterClose, true);
+eq("one accepted before the open counts for that same day",
+   filingSession({ accepted: "2026-09-14T12:00:16.000Z" }).date, "2026-09-14");
+eq("one after Friday's close lands on Monday",
+   filingSession({ accepted: "2026-09-18T20:30:00.000Z" }).date, "2026-09-21");
+/* 20:30 UTC is 3:30pm in winter, so still inside that day's session. */
+eq("the close is found in winter time too",
+   filingSession({ accepted: "2026-01-15T20:30:00.000Z" }).date, "2026-01-15");
+eq("no acceptance time falls back to the filing date",
+   filingSession({ date: "2026-09-15" }).date, "2026-09-15");
+
+/* The documents themselves. */
+eq("HTML is flattened to text with entities decoded",
+   filingText("<p>On Sept. 17 the Company&#8217;s board</p><p>approved &amp; filed</p>"),
+   "On Sept. 17 the Company’s board\napproved & filed");
+check("scripts and styles are dropped",
+      !/alert|color/.test(filingText("<style>p{color:red}</style><script>alert(1)<\/script><p>Body</p>")), "");
+check("the forms read include 8-K and 6-K", READ_TEXT.has("8-K") && READ_TEXT.has("6-K"), "");
+check("ownership reports are left to the insiders window",
+      !MATERIAL_FORMS.has("4") && !MATERIAL_FORMS.has("144"), "");
+
+eq("a press release's headline is found under the exhibit label",
+   pressHeadline("EXHIBIT 99.1\nForward Industries Announces Updated Proposal to Acquire SkyAI, Inc.\n" +
+                 "WEST PALM BEACH, Fla., Sept. 15, 2026 (GLOBE NEWSWIRE) -- Forward Industries today announced."),
+   "Forward Industries Announces Updated Proposal to Acquire SkyAI, Inc.");
+eq("the form's own header is never taken for a headline",
+   pressHeadline("UNITED STATES\nSECURITIES AND EXCHANGE COMMISSION\nWashington, D.C. 20549\nFORM 8-K"), null);
+eq("an 8-K without a release is read from its first item",
+   itemSummary("Item 7.01 Regulation FD Disclosure.\nOn September 17, 2026, Viant Technology Inc. " +
+               "(the “Company”) announced that it will not proceed with the offering. Other text."),
+   "On September 17, 2026, Viant Technology Inc. (the “Company”) announced that it will not proceed with the offering.");
+eq("the exhibits item is skipped",
+   itemSummary("Item 9.01 Financial Statements and Exhibits.\n(d) Exhibits"), null);
+
+/* What a filing means. */
+const pulled = interpretFiling({ form: "8-K", items: ["7.01"], accepted: "2026-09-17T21:32:08.000Z",
+  date: "2026-09-18", exhibit: false,
+  text: "Item 7.01 Regulation FD Disclosure.\nOn September 17, 2026, Viant Technology Inc. (the “Company”) " +
+        "announced that the Company and a stockholder have determined not to proceed with the previously " +
+        "announced underwritten public offering of 8,500,000 shares of Class A common stock." }, 18);
+/* An offering that is called off is the opposite of an offering. */
+eq("a withdrawn offering is read as one", pulled.event.key, "offering-off");
+eq("and as a reason to rise, not fall", pulled.event.direction, "up");
+eq("so it is not flagged against a rise", pulled.event.mismatch, false);
+
+const routine = interpretFiling({ form: "8-K", items: ["7.01", "8.01"], accepted: "2026-09-14T12:00:16.000Z",
+  exhibit: false,
+  text: "Item 8.01 Other Events.\nATM and BTC Update\nOn September 14, 2026, Strategy Inc announced that it " +
+        "did not sell any shares under its at-the-market offering program and did not purchase any bitcoin." }, 13);
+check("a routine at-the-market update is not an offering",
+      !["offering", "offering-off"].includes(routine.event.key), routine.event.key);
+
+eq("items name the event before a word is read",
+   interpretFiling({ form: "8-K", items: ["2.05", "5.02", "9.01"] }, -9).event.key, "restructuring");
+eq("the strongest item wins",
+   interpretFiling({ form: "8-K", items: ["5.02", "4.02"] }, -30).event.key, "restatement");
+eq("a priced offering is known from the form alone",
+   interpretFiling({ form: "424B5" }, -23).event.key, "offering");
+check("and flagged when the stock rose on it",
+      interpretFiling({ form: "424B5" }, 18).event.mismatch === true, "");
+eq("a 13D amendment is a stake change",
+   interpretFiling({ form: "SCHEDULE 13D/A" }, 19).event.key, "stake");
+check("every item carries a label",
+      Object.values(FILING_ITEMS).every((i) => i.label && i.base > 0), "");
+const release = interpretFiling({ form: "8-K", items: ["7.01"], exhibit: true,
+  text: "Exhibit 99.1\nForward Industries Announces Updated Proposal to Acquire SkyAI, Inc.\n" +
+        "WEST PALM BEACH, Fla., Sept. 15, 2026 (GLOBE NEWSWIRE) -- Forward Industries, Inc. today announced an " +
+        "updated proposal to acquire SkyAI, Inc. for cash and stock. More followed." }, 21);
+eq("a press release is read for what it announces", release.event.key, "deal");
+eq("in the company's own headline",
+   release.headline, "Forward Industries Announces Updated Proposal to Acquire SkyAI, Inc.");
+check("with the lede as the excerpt", /today announced an updated proposal/.test(release.summary ?? ""),
+      String(release.summary));
+
+/* The whole path, end to end: a mover with no news at all. */
+const noNewsSectors = { Technology: { median: 0.8, count: 400 } };
+const viant = explainMove(
+  { symbol: "DSP", name: "Viant Technology Inc.", changePercent: 18, sector: "Technology" },
+  { symbol: "DSP", news: newsPayload([]),
+    filings: filingsFor("DSP", [{ form: "8-K", items: ["7.01"], date: "2026-09-18",
+      accepted: "2026-09-17T21:32:08.000Z", exhibit: false, url: "https://www.sec.gov/x-index.htm",
+      text: "Item 7.01 Regulation FD Disclosure.\nOn September 17, 2026, Viant Technology Inc. (the “Company”) " +
+            "announced that the Company and a stockholder have determined not to proceed with the previously " +
+            "announced underwritten public offering of 8,500,000 shares." }]) },
+  noNewsSectors, FRI);
+eq("a filing explains a move the news never covered", viant.verdict.kind, "offering-off");
+eq("as the likely reason, filed the evening before", viant.verdict.confidence, "likely");
+check("the source is the filing itself", /SEC filing · 8-K item 7\.01/.test(viant.verdict.source?.publisher ?? ""),
+      String(viant.verdict.source?.publisher));
+check("with a link to it", /sec\.gov/.test(viant.verdict.source?.url ?? ""), "");
+check("and when the market first saw it",
+      /after the close on Thu 17 Sept?, so the market first saw it on Fri 18 Sept?/.test(viant.verdict.note ?? ""),
+      String(viant.verdict.note));
+eq("the filings are listed as evidence", viant.evidence.some((e) => e.kind === "filings"), true);
+
+/* A filing from days before the move is background, never "likely". */
+const olderFiling = explainMove(
+  { symbol: "AEHL", changePercent: -23, sector: "Technology" },
+  { symbol: "AEHL", filings: filingsFor("AEHL", [{ form: "424B5", date: "2026-09-15",
+      accepted: "2026-09-15T20:45:37.000Z", url: "u" }]) },
+  noNewsSectors, FRI);
+eq("an offering two sessions earlier is named", olderFiling.verdict.kind, "offering");
+eq("but only as a possibility", olderFiling.verdict.confidence, "possible");
+
+/* Filings are checked against the ticker, like every other feed. */
+const otherFilings = explainMove(
+  { symbol: "PSIG", changePercent: 44, sector: "Technology" },
+  { symbol: "PSIG", filings: filingsFor("MPTI", [{ form: "424B5", date: FRI,
+      accepted: "2026-09-18T12:00:00.000Z", url: "u" }]) },
+  noNewsSectors, FRI);
+eq("another company's filings are ignored", otherFilings.unexplained, true);
+
+/* When nothing turns up, it says what was searched — or what could not be. */
+const searched = explainMove({ symbol: "QMLS", changePercent: 20, sector: "Technology" },
+  { symbol: "QMLS", news: newsPayload([]), filings: filingsFor("QMLS", []) }, noNewsSectors, FRI);
+check("an empty search says filings were checked",
+      /nothing filed with the SEC/.test(searched.verdict.text), searched.verdict.text);
+const notSearched = explainMove({ symbol: "QMLS", changePercent: 20, sector: "Technology" },
+  { symbol: "QMLS", news: newsPayload([]), filings: null }, noNewsSectors, FRI);
+check("and a failed lookup says it could not be",
+      /could not be checked/.test(notSearched.verdict.text), notSearched.verdict.text);
+
+/* The headline gaps found on the same day's list. */
+eq("a Phase 2a is a phase",
+   classifyHeadline({ title: "Sionna Advances New CF Combo To Phase 2a After SION-719 Setback" }).key, "regulatory");
+eq("a study failure is a trial result",
+   classifyHeadline({ title: "Acme Halts Program After Study Failure" }).key, "regulatory");
+eq("halving the workforce is a restructuring",
+   classifyHeadline({ title: "SION to Cut Workforce by Nearly Half" }).key, "restructuring");
+
+/* -- second pass, from the same day's list -- */
+
+/* XENE fell 31% on a trial enrollment pause, which was read as no catalyst. */
+eq("a paused trial is a trial result",
+   classifyHeadline({ title: "Xenon Pharma Tumbles On Azetukalner Psychiatry Trial Enrollment Pause" }).key,
+   "regulatory");
+eq("and a reason to fall",
+   classifyHeadline({ title: "Acme Pauses Dosing In Phase 2 Study" }).direction, "down");
+
+/* "Material Definitive Agreement" is an 8-K item title, not deal language. */
+check("the item 1.01 title is not a takeover",
+      classifyHeadline({ title: "Entry into a Material Definitive Agreement; Business Update" }).key !== "deal", "");
+eq("a definitive merger agreement still is",
+   classifyHeadline({ title: "Acme Enters Into Definitive Merger Agreement With Beta" }).key, "deal");
+
+/* Foreign issuers file 6-Ks with no item numbers, but reuse the 8-K titles. */
+const sixK = "FORM 6-K\nREPORT OF FOREIGN PRIVATE ISSUER\nTJGC GROUP LIMITED\n" +
+  "Indicate by check mark whether the registrant files annual reports under cover of Form 20-F\n" +
+  "Entry into a Material Definitive Agreement; Business Update\n" +
+  "On September 16, 2026, TJGC Group Limited entered into a manufacturing agreement with a " +
+  "regional electronics maker. Further details follow.";
+eq("a 6-K's item is read from its heading", itemsFromTitles(sixK), ["1.01"]);
+eq("its heading is kept as the headline",
+   bodySummary(sixK).heading, "Entry into a Material Definitive Agreement; Business Update");
+check("and its first dated sentence as the summary",
+      /^On September 16, 2026, TJGC Group Limited entered into/.test(bodySummary(sixK).summary ?? ""),
+      String(bodySummary(sixK).summary));
+eq("so the 6-K reads as an agreement",
+   interpretFiling({ form: "6-K", items: [], exhibit: false, text: sixK }, 49).event.key, "contract");
+
+/* LSE's exhibit was financial statements in inline XBRL; its hidden header of
+   tagged facts came through as the text. */
+eq("inline XBRL headers are dropped",
+   filingText('<ix:header><ix:hidden>0001985139 us-gaap:RelatedPartyMember</ix:hidden></ix:header>' +
+              '<p>Interim Condensed Consolidated Financial Statements</p>'),
+   "Interim Condensed Consolidated Financial Statements");
+eq("a financial report filed as a 6-K is a results release",
+   interpretFiling({ form: "6-K", items: [], exhibit: true,
+     text: "Interim Condensed Consolidated Financial Statements\nFor the six months ended March 31, 2026" }, -11)
+     .event.key, "results");
+
+/* ELA fell 9% while the only headline said it had jumped 6.6%. */
+eq("a headline's direction is read", reportedDirection("Envela (ELA) Stock Jumps 6.6%: Will It Continue to Soar?"), "up");
+eq("either way", reportedDirection("Why Acme Stock Plunged Today"), "down");
+eq("and not guessed where it says nothing", reportedDirection("Acme Names New Chief Financial Officer"), null);
+const envela = explainMove(
+  { symbol: "ELA", name: "Envela Corporation", changePercent: -9, sector: "Technology" },
+  { symbol: "ELA", news: newsPayload([
+      { title: "Envela (ELA) Stock Jumps 6.6%: Will It Continue to Soar?", created: "Sep 16, 2026",
+        url: "/e", primarysymbol: "ela", related_symbols: ["ela|stocks"] }]),
+    filings: filingsFor("ELA", []) },
+  noNewsSectors, FRI);
+eq("a report of a rise is not the reason for a fall", envela.unexplained, true);
+eq("nor listed under it", envela.evidence.some((e) => e.kind === "coverage"), false);
+
+/* A weak filing is described as a filing, not as news. */
+const weakFiling = explainMove(
+  { symbol: "TJGC", changePercent: 49, sector: "Technology" },
+  { symbol: "TJGC", news: newsPayload([]),
+    filings: filingsFor("TJGC", [{ form: "EFFECT", date: FRI, accepted: "2026-09-18T12:00:00.000Z", url: "u" }]) },
+  noNewsSectors, FRI);
+check("it is never called news coverage", !/news/i.test(weakFiling.verdict.title), weakFiling.verdict.title);
+const weakWords = `${weakFiling.verdict.text} ${weakFiling.verdict.warning ?? ""}`;
+check("and says why it is unlikely to be the reason", /went the other way/.test(weakWords), weakWords);
+check("in words that fit a filing", !/article|news like this/i.test(weakWords), weakWords);
+eq("and never as the likely reason", weakFiling.verdict.confidence, "possible");
 
 /* ============ weekly and monthly movers ============ */
 
