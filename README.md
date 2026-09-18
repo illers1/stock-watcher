@@ -378,6 +378,39 @@ If you would rather deploy from the command line, install the Netlify CLI
 (`npm i -g netlify-cli`, which needs Node) and run `netlify deploy --prod`.
 The GitHub route needs no local tooling at all.
 
+## Installing it on a phone
+
+The deployed site is also a Progressive Web App, so it installs from the
+browser with no App Store, no signing and no download.
+
+**iPhone and iPad** — open the site in Safari (it must be Safari; Chrome on iOS
+cannot install), tap the Share button, then **Add to Home Screen**. It appears
+as an icon called *Watcher*. Opening it from there gives a full screen with no
+address bar and no browser toolbar, its own app switcher card, and its own
+launch icon — the same thing an App Store download would give, arriving by a
+different route.
+
+**Android** — Chrome offers *Install app* in its menu, or prompts on its own.
+
+**Mac and Windows** — Chrome and Edge show an install button in the address
+bar, which gives it a dock or taskbar icon and its own window.
+
+Two things worth knowing on iOS:
+
+- The installed app has its **own storage**, separate from Safari's. A
+  watchlist built up in Safari does not follow it onto the home screen, and
+  the two drift apart afterwards. Build the list once inside the installed
+  app, or use a group link, which lives on the server and so is the same
+  everywhere.
+- It **keeps working without a connection**: `sw.js` caches the pages, styles
+  and scripts, so the app opens and shows the last list it had. Prices are
+  never cached — `/api/` always goes to the network — so offline it opens and
+  reports that the update failed rather than showing you a stale price as a
+  live one.
+
+A redeploy is picked up on the next launch: every request tries the network
+first and falls back to the cache only when the network fails.
+
 ## Running it locally
 
 ```bash
@@ -408,6 +441,10 @@ Python 3.7+ and nothing else. Options: `--port 9000`, `--no-open`,
 - `static/news-model.mjs` — the headline parsing for `/api/news`, kept apart
   from the per-symbol news in `analyze.mjs` because the markets feed carries a
   standfirst and a relative timestamp the other one does not.
+- `static/manifest.webmanifest`, `static/sw.js`, `static/register-sw.js` — what
+  makes it installable: the manifest names and icons the app, the service
+  worker serves it network-first with a cached fallback (and never touches
+  `/api/`), and the registration script is the one line every page loads.
 - `netlify/lib/calendar.mjs` — the walk over Nasdaq's date-indexed calendar,
   shared by `/api/calendar` (which collapses it to one date per symbol) and
   `/api/earnings` (which keeps the day-by-day listing).

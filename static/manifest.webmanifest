@@ -1,0 +1,22 @@
+{
+  "name": "Stock Watcher",
+  "short_name": "Watcher",
+  "description": "Watchlist, movers, earnings radar and shared group lists, on one rating engine.",
+  "start_url": "/index.html",
+  "scope": "/",
+  "id": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f6f7f9",
+  "theme_color": "#f6f7f9",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Movers", "url": "/movers.html" },
+    { "name": "Earnings", "url": "/earnings.html" },
+    { "name": "Group", "url": "/group.html" }
+  ]
+}

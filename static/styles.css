@@ -232,6 +232,12 @@ tr.tick-down td { animation: flash-down .9s ease-out; }
 @media (max-width: 620px) {
   .topbar { flex-wrap: wrap; row-gap: 8px; }
   .topbar-right { width: 100%; justify-content: flex-end; }
+  /* Seven tabs are wider than a phone. Let them scroll inside their own strip
+     rather than dragging the whole page sideways — in the installed app a page
+     that slides left and right just reads as broken. */
+  .brand { flex: 1; min-width: 0; }
+  .tabs { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
   .status { margin-right: auto; }
   .summary { grid-template-columns: repeat(2, 1fr); }
 
