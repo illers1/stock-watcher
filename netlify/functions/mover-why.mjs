@@ -1,6 +1,7 @@
 /* GET /api/mover-why?symbol=AOUT
 
-   The raw evidence around one move — results and headlines. What it adds up to
+   The raw evidence around one move — results, headlines and recent daily
+   closes. What it adds up to
    is decided in static/movers-model.mjs, alongside the sector context. */
 
 import { fetchWhy } from "../lib/movers.mjs";
@@ -16,7 +17,7 @@ const json = (body, headers = {}) =>
 export default async (req) => {
   const symbol = (new URL(req.url).searchParams.get("symbol") ?? "").trim().toUpperCase();
   if (!symbol || !SYMBOL_RE.test(symbol)) {
-    return json({ symbol, earnings: null, news: null, error: "A valid symbol is required" });
+    return json({ symbol, earnings: null, news: null, history: null, error: "A valid symbol is required" });
   }
   try {
     return json({ ...(await fetchWhy(symbol)), error: null }, {
@@ -24,7 +25,7 @@ export default async (req) => {
       "Netlify-CDN-Cache-Control": "public, max-age=900, stale-while-revalidate=3600",
     });
   } catch (err) {
-    return json({ symbol, earnings: null, news: null, error: `Lookup failed (${err?.name ?? "error"})` });
+    return json({ symbol, earnings: null, news: null, history: null, error: `Lookup failed (${err?.name ?? "error"})` });
   }
 };
 

@@ -1,10 +1,12 @@
-/* Daily Movers — the session's largest moves, with what coincided with them.
+/* Movers — the largest moves over a session, a week or a month, with what
+   coincided with them.
 
    Explanations are fetched only when a row is opened. Most of a movers list
    gets glanced at rather than read, and each explanation costs two upstream
    requests, so fetching forty of them up front would be waste. */
 
-import { explainMove, summariseCause } from "./movers-model.mjs";
+import { explainMove, summariseCause, PERIODS, periodKey, periodWindow, shortDate }
+  from "./movers-model.mjs";
 import { mountFilterGuide, MOVER_FILTERS } from "./filter-guide.mjs";
 import { SECTORS } from "./screen-model.mjs";
 import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
@@ -15,14 +17,15 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
   var VIEW_KEY = "stockwatcher.movers.v1";
 
   var els = {};
-  ["status", "refresh", "filters", "cap", "sector", "minPrice", "count",
-   "gainers", "losers", "empty", "banner", "coverage"].forEach(function (id) {
+  ["status", "refresh", "filters", "period", "cap", "sector", "minPrice", "count",
+   "gainers", "losers", "empty", "banner", "coverage", "gainersHead", "losersHead"].forEach(function (id) {
     els[id] = document.getElementById(id);
   });
 
-  var view = load(VIEW_KEY, { cap: "any", sector: "any", minPrice: 3, count: 15 });
+  var view = load(VIEW_KEY, { period: "day", cap: "any", sector: "any", minPrice: 3, count: 15 });
   var symbols = loadWatchlist();
   var data = { gainers: [], losers: [], sectors: {} };
+  var period = periodKey(view.period);
   var sessionDate = null;
   var explanations = {};   // symbol -> assembled explanation
   var pending = {};
@@ -68,7 +71,7 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
     els.banner.hidden = true;
 
     var qs = new URLSearchParams({
-      cap: view.cap, sector: view.sector,
+      period: view.period, cap: view.cap, sector: view.sector,
       minPrice: view.minPrice, count: view.count,
     });
     return fetch("/api/movers?" + qs)
@@ -77,10 +80,12 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
         if (d.error) { els.banner.textContent = d.error; els.banner.hidden = false; }
         data = d;
         explanations = {};
+        period = periodKey(d.period || view.period);
         /* The feed states the session it describes; a guess from the clock
            gets every public holiday wrong. */
         sessionDate = d.sessionDate || null;
         renderCoverage(d);
+        renderHeads();
         render();
         setStatus((d.gainers || []).length + (d.losers || []).length + " movers · " +
           new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
@@ -95,7 +100,8 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
       .then(function (r) { return r.json(); })
       .then(function (why) {
         var mover = findMover(sym);
-        explanations[sym] = explainMove(mover, why, data.sectors, sessionDate);
+        explanations[sym] = explainMove(mover, why, data.sectors, sessionDate,
+          { period: period, market: data.market });
       })
       .catch(function () { explanations[sym] = { evidence: [], unexplained: true, articles: [] }; })
       .then(function () { delete pending[sym]; render(); });
@@ -109,29 +115,71 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
 
   /* ---------------- rendering ---------------- */
 
+  function renderHeads() {
+    var over = period === "day" ? "" : " over the past " + PERIODS[period].noun;
+    els.gainersHead.textContent = "Biggest gainers" + over;
+    els.losersHead.textContent = "Biggest losers" + over;
+  }
+
   function renderCoverage(d) {
     if (!d || d.tradeable === undefined) { els.coverage.hidden = true; return; }
-    var when = sessionDate
-      ? new Date(sessionDate + "T00:00:00").toLocaleDateString(undefined,
-          { weekday: "long", day: "numeric", month: "long" })
-      : "the last session";
+    var win = periodWindow(period, sessionDate);
+    var span = !sessionDate ? "the last session"
+      : period === "day" ? "the session ending <strong>" + esc(shortDate(sessionDate)) + "</strong>"
+      : "<strong>" + esc(shortDate(win.start)) + "</strong> to <strong>" +
+        esc(shortDate(win.end)) + "</strong>";
     els.coverage.innerHTML =
-      "Moves from the session ending <strong>" + esc(when) + "</strong>. " +
+      "Moves over " + span + ". " +
       "<strong>" + d.tradeable.toLocaleString() + "</strong> of " +
       d.universeSize.toLocaleString() + " US-listed stocks clear the $3 price and " +
-      "$25M market-value floors and are ranked.";
+      "$25M market-value floors and are ranked." +
+      (d.unpriced ? " <strong>" + d.unpriced.toLocaleString() + "</strong> more clear the floors but " +
+        "carry no " + PERIODS[period].adj + " figure — mostly units and preference lines — and are left out." : "") +
+      (d.market === null || d.market === undefined ? "" :
+        " The typical stock moved <strong>" + pct(d.market) + "</strong>.");
     els.coverage.hidden = false;
+  }
+
+  function articleHtml(a) {
+    return '<li>' +
+      (a.tag ? '<span class="ev-tag">' + esc(a.tag) + '</span>' : '') +
+      (a.url
+        ? '<a href="' + esc(a.url) + '" target="_blank" rel="noopener noreferrer">' + esc(a.title) + '</a>'
+        : esc(a.title)) +
+      '<span class="ev-meta">' + esc(a.publisher || "") + " · " + esc(a.created || "") + '</span></li>';
+  }
+
+  /* The reading the evidence best supports, said first and in plain words —
+     the rest of the panel is the working behind it. */
+  function verdictHtml(v) {
+    if (!v) return "";
+    var tag = v.confidence === "likely" ? "Most likely reason"
+            : v.confidence === "possible" ? "Possible reason"
+            : "No clear reason";
+    var src = v.source;
+    return '<div class="verdict verdict-' + esc(v.confidence) + '">' +
+      '<span class="verdict-tag">' + esc(tag) + '</span>' +
+      '<b>' + esc(v.title) + '</b>' +
+      '<p>' + esc(v.text) + '</p>' +
+      (v.warning ? '<p class="verdict-warning">' + esc(v.warning) + '</p>' : '') +
+      (src
+        ? '<blockquote class="verdict-source">' +
+            (src.url
+              ? '<a href="' + esc(src.url) + '" target="_blank" rel="noopener noreferrer">' + esc(src.title) + '</a>'
+              : esc(src.title)) +
+            '<span class="ev-meta">' + esc(src.publisher || "") + " · " + esc(src.created || "") + '</span>' +
+            (src.excerpt ? '<span class="verdict-excerpt">' + esc(src.excerpt) + '</span>' : '') +
+          '</blockquote>'
+        : '') +
+      (v.note ? '<p class="verdict-note">' + esc(v.note) + '</p>' : '') +
+      '</div>';
   }
 
   function evidenceHtml(e) {
     if (e.kind === "coverage") {
       return '<li class="ev ev-' + e.strength + '"><b>' + esc(e.headline) + '</b>' +
-        '<ul class="ev-articles">' + (e.articles || []).map(function (a) {
-          return '<li>' + (a.url
-            ? '<a href="' + esc(a.url) + '" target="_blank" rel="noopener noreferrer">' + esc(a.title) + '</a>'
-            : esc(a.title)) +
-            '<span class="ev-meta">' + esc(a.publisher || "") + " · " + esc(a.created || "") + '</span></li>';
-        }).join("") + '</ul></li>';
+        (e.detail ? '<span class="ev-detail">' + esc(e.detail) + '</span>' : "") +
+        '<ul class="ev-articles">' + (e.articles || []).map(articleHtml).join("") + '</ul></li>';
     }
     return '<li class="ev ev-' + e.strength + '"><b>' + esc(e.headline) + '</b>' +
       (e.detail ? '<span class="ev-detail">' + esc(e.detail) + '</span>' : "") +
@@ -156,13 +204,10 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
       '</summary>' +
       '<div class="mover-body">' +
         (exp
-          ? (exp.evidence.length
-              ? '<ul class="ev-list">' + exp.evidence.map(evidenceHtml).join("") + '</ul>'
-              : '') +
-            (exp.unexplained
-              ? '<p class="ev-none">Nothing in the public record accounts for this. No results within four days, ' +
-                'no headlines around the session, and the sector did not move with it. Large moves without a ' +
-                'visible cause are common in smaller companies and are not evidence of anything by themselves.</p>'
+          ? verdictHtml(exp.verdict) +
+            (exp.evidence.length
+              ? '<p class="ev-head">What that is based on</p>' +
+                '<ul class="ev-list">' + exp.evidence.map(evidenceHtml).join("") + '</ul>'
               : '')
           : '<p class="sub">' + (pending[sym] ? "Looking for what happened…" : "") + '</p>') +
         '<div class="mover-actions">' +
@@ -189,7 +234,7 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
 
   /* ---------------- events ---------------- */
 
-  ["cap", "sector", "minPrice", "count"].forEach(function (key) {
+  ["period", "cap", "sector", "minPrice", "count"].forEach(function (key) {
     els[key].addEventListener("change", function () {
       view[key] = els[key].value;
       save(VIEW_KEY, view);
@@ -231,8 +276,9 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
   mountFilterGuide(MOVER_FILTERS);
   els.sector.innerHTML = '<option value="any">All sectors</option>' +
     SECTORS.map(function (s) { return '<option value="' + esc(s) + '">' + esc(s) + '</option>'; }).join("");
-  ["cap", "sector", "minPrice", "count"].forEach(function (k) {
+  ["period", "cap", "sector", "minPrice", "count"].forEach(function (k) {
     els[k].value = String(view[k]);
   });
+  renderHeads();
   fetchMovers();
 })();

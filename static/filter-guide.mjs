@@ -171,6 +171,15 @@ export const EARNINGS_FILTERS = [
 
 export const MOVER_FILTERS = [
   {
+    name: "Period",
+    what: "Whether the ranking is by the last session's move, the past week's or the past month's. The three answer different questions: a daily list is dominated by the day's news, while a weekly or monthly list surfaces runs that built up over several sessions, which no single headline explains. The explanation panel adapts — over a week or a month it also works out which sessions the move actually happened on.",
+    options: [
+      ["Day", "The last completed session, which is what the price feeds describe."],
+      ["Week", "The past week, measured from the close a week before the last session."],
+      ["Month", "The past month, on the same basis."],
+    ],
+  },
+  {
     name: "Size",
     what: "A market-capitalisation band. Worth changing depending on what you are after: the largest moves almost always belong to small companies, where a single contract or trial result is material, while a 5% move in a mega cap is a far bigger event in absolute terms.",
   },

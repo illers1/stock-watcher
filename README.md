@@ -322,34 +322,69 @@ A test walks each page's filter form and fails if a control has no entry, so a
 filter added later cannot quietly go undocumented.
 
 
-## Daily Movers
+## Movers
 
-`movers.html` lists the largest moves of the last completed session, gainers and
-losers side by side, and opens to show what was happening around each one.
+`movers.html` lists the largest moves over the **last completed session, the
+past week or the past month**, gainers and losers side by side, and opens each
+row to show why the stock moved.
 
-The evidence is ranked by how well it usually accounts for a large move:
+The daily figures come from the same universe feed as everything else. Weekly
+and monthly figures come from a market scanner that returns every US listing in
+one request, joined onto that universe by symbol, so the $3 price and $25M
+market-value floors apply identically whichever period is chosen. A few
+listings — units, preference lines, very recent listings — carry no weekly
+figure; they are dropped, counted, and the count is stated on the page rather
+than quietly narrowing the field.
 
-- **Results** — a company that reported hours earlier is nearly always the
-  reason, and the surprise against consensus says how much of one.
-- **Coverage** — headlines dated around the session. These describe a move at
-  least as often as they explain it, so they are offered as reading.
-- **Sector** — how the rest of the sector did, computed from every tradeable
-  stock in it. This is what says whether the company did anything at all: a
-  stock down 17% on a day its sector fell 0.3% is a company story; the same
-  stock down 8% while the sector fell 6% is not.
+### Why a stock moved
 
-Two things it does deliberately.
+Each row opens with **one plain reading of what happened**, labelled *most
+likely*, *possible* or *no clear reason*, followed by the evidence behind it.
+The reading is chosen from:
 
-**It says when it does not know.** Where no results, headlines or sector move
+- **Results** — a company that reported just before the move is nearly always
+  the reason, and the surprise against consensus says how much of one.
+- **A catalyst in the headlines** — a takeover, a trial result or approval, a
+  guidance change, a share sale, an index inclusion, an analyst call, a legal
+  problem. Each kind carries a line saying *why that sort of news moves a
+  price*, because "FDA approval" means something quite different for a
+  one-drug biotech than a contract win does for a large manufacturer.
+- **Where in the period it happened** — for a week or a month, the daily closes
+  say whether the move was one violent session or a steady drift. One session
+  points at an event that can be dated, and headlines are then weighed against
+  *that* day rather than the whole window; a drift usually means sentiment or
+  money flowing in and out, which no headline explains.
+- **Sector and market** — how the rest of the sector did, and the typical
+  stock. A stock down 17% on a day its sector fell 0.3% is a company story; the
+  same stock down 8% while the sector fell 6% is not. The bar rises with the
+  window, since a sector drifts further over a month than over a day.
+
+Four things it does deliberately.
+
+**It says when it does not know.** Where no results, catalyst or sector move
 turn up, the row says so instead of reaching for the nearest headline. Large
 moves with no visible cause are common in small companies and are not evidence
 of anything on their own.
+
+**It throws out headlines that are not about the company.** Asked about a
+symbol it has no coverage for, the news feed answers with general market
+stories anyway — the same list for every such symbol, which reads as if it were
+about the stock you asked about. Articles are matched against the companies the
+publisher tagged them with, so a market wrap and a piece about five other
+biotechs are set aside. So are law-firm class-action notices, which follow a
+fall rather than cause one, and stock listicles.
 
 **It flags the cases that contradict themselves.** Lululemon fell 17% having
 beaten consensus by 15%; Guidewire fell 20% having beaten by 12%. Both rows say
 "Results — but read the detail" and explain that the reaction is to something
 other than the headline number, usually guidance. A tool that reported "beat
-expectations" against a 17% fall would be worse than useless.
+expectations" against a 17% fall would be worse than useless. The same check
+runs the other way: a share offering usually pushes a price down, so one quoted
+against a rise is flagged rather than presented as the reason.
+
+**It distinguishes background from trigger.** A takeover announced five days
+before the session the price actually moved on is named, but only as a
+possibility, with the gap spelled out.
 
 The session date comes from the data feed rather than the clock. Working back
 from today over weekends alone gets every public holiday wrong — the first

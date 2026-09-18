@@ -873,7 +873,7 @@ table.insiders tr.routine { opacity: .62; }
   .guide-row { grid-template-columns: 1fr; gap: 4px; }
 }
 
-/* ---------- daily movers ---------- */
+/* ---------- movers ---------- */
 .movers-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(430px, 1fr)); gap: 18px; }
 .movers-head {
   font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
@@ -902,6 +902,47 @@ table.insiders tr.routine { opacity: .62; }
 .mv-cause { font-size: 11.5px; text-align: right; }
 
 .mover-body { padding: 4px 14px 14px; }
+
+/* The reading the evidence supports, said first; the list below is the working. */
+.verdict {
+  border: 1px solid var(--border); border-left: 3px solid var(--muted);
+  border-radius: 8px; padding: 10px 12px; margin: 6px 0 4px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+.verdict-likely { border-left-color: var(--accent); }
+.verdict-possible { border-left-color: var(--muted); }
+.verdict-unclear { border-left-color: var(--border-strong); }
+.verdict-tag {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 3px;
+}
+.verdict-likely .verdict-tag { color: var(--accent); }
+.verdict b { display: block; font-size: 13px; margin-bottom: 4px; }
+.verdict p { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.verdict-warning {
+  margin-top: 6px !important; color: var(--down); background: var(--down-soft);
+  border-radius: 6px; padding: 5px 8px;
+}
+.verdict-note { margin-top: 6px !important; font-style: italic; }
+.verdict-source {
+  margin: 8px 0 0; padding: 7px 0 0 10px; border-left: 2px solid var(--border-strong);
+  font-size: 12.5px;
+}
+.verdict-source a { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); }
+.verdict-source a:hover { color: var(--accent); }
+.verdict-excerpt {
+  display: block; margin-top: 4px; color: var(--muted); font-size: 11.5px; line-height: 1.55;
+}
+.ev-head {
+  margin: 12px 0 0; font-size: 10px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.ev-tag {
+  display: inline-block; margin-right: 6px; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .03em; color: var(--muted);
+  border: 1px solid var(--border-strong); border-radius: 5px; padding: 1px 5px;
+  vertical-align: 1px;
+}
 .ev-list { list-style: none; margin: 6px 0 0; padding: 0; }
 .ev { padding: 9px 0 9px 11px; border-left: 3px solid var(--border-strong); margin-bottom: 8px; font-size: 12.5px; }
 .ev-strong { border-left-color: var(--accent); }

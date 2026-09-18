@@ -35,8 +35,11 @@ const { buildCandidate, weaknessScore, rankCandidates, SECTORS } =
   await import("../static/screen-model.mjs" + v);
 const { filterUniverse, CAP_BANDS, ORDERINGS, parseAsOf, MIN_PRICE, MIN_MARKET_CAP } =
   await import("../netlify/lib/screener.mjs" + v);
-const { explainMove, summariseCause, toIsoDate } = await import("../static/movers-model.mjs" + v);
-const { sectorMoves } = await import("../netlify/lib/movers.mjs" + v);
+const { explainMove, summariseCause, toIsoDate, periodWindow, pricePath, sessionMoves,
+        parseHistory, classifyHeadline, excerpt, PERIODS } =
+  await import("../static/movers-model.mjs" + v);
+const { sectorMoves, performanceMap, applyPeriod, PERIOD_COLUMNS } =
+  await import("../netlify/lib/movers.mjs" + v);
 const { toIso, longDateToIso, splitDisplayName, regulatoryDate, buildCatalysts,
         countByKind, excerptAround, KINDS, REGULATORY_HORIZON_DAYS } =
   await import("../static/catalysts-model.mjs" + v);
@@ -1203,6 +1206,193 @@ eq("news alone is summarised as news", summariseCause(withNews), "In the news");
 
 eq("nothing at all is unexplained",
    explainMove({ symbol: "Q", changePercent: 20 }, {}, {}, SESSION).unexplained, true);
+
+/* -- the verdict: one plain reading, labelled by how well it is supported -- */
+const dealNews = explainMove(
+  { symbol: "T", changePercent: 38, sector: "Retail" },
+  { news: newsPayload([{ title: "BigCo to acquire T in $4 billion deal", created: "Sep 4, 2026",
+                         publisher: "RTTNews", url: "/deal",
+                         description: "BigCo said it will acquire T for $52 a share in cash." }]) },
+  sectors, SESSION);
+eq("a takeover headline outranks bare coverage", dealNews.verdict.kind, "deal");
+eq("and is stated as the likely reason", dealNews.verdict.confidence, "likely");
+check("with the headline attached as the source",
+      /to acquire T/.test(dealNews.verdict.source?.title ?? ""), "");
+check("and an excerpt of what it says",
+      /52 a share/.test(dealNews.verdict.source?.excerpt ?? ""), "");
+eq("the row summarises it in two words", summariseCause(dealNews), "Deal news");
+
+/* A headline naming two things leads with the one that matters. */
+eq("the event a headline leads with wins",
+   classifyHeadline({ title: "Acme Swings To Q2 Profit On Treasury Gains; Advances Phase 3 Plans" }).key,
+   "results");
+eq("and the other way round",
+   classifyHeadline({ title: "Acme Reports Positive Phase 3 Data Alongside Q2 Earnings" }).key,
+   "regulatory");
+
+eq("a deal can be phrased without the word acquire",
+   classifyHeadline({ title: "Swarmer To Buy Ukraine's Ratel Robotics In $224 Mln Deal" }).key, "deal");
+
+/* A catalyst from the other end of the window is background, not the trigger,
+   and is labelled as the weaker claim it is. */
+const closesFor = (values) => ({ data: { tradesTable: { rows: values.map(([date, close]) =>
+  ({ date, close: "$" + close })) } } });
+const slump = closesFor([
+  ["08/28/2026", 10], ["08/31/2026", 10.1], ["09/01/2026", 10.05],
+  ["09/02/2026", 10], ["09/03/2026", 7], ["09/04/2026", 7],
+]);
+const staleDeal = explainMove(
+  { symbol: "D", changePercent: -30, sector: "Retail" },
+  { history: slump, news: newsPayload([
+      { title: "D agrees to buy Rival Inc for $224 million", created: "Aug 30, 2026", url: "/d" }]) },
+  sectors, SESSION, { period: "week" });
+eq("it is still named", staleDeal.verdict.kind, "deal");
+eq("but only as a possibility", staleDeal.verdict.confidence, "possible");
+check("and the gap is spelled out",
+      /dated \d+ days from the session/.test(staleDeal.verdict.note ?? ""), String(staleDeal.verdict.note));
+
+/* Results beat a mere headline when both are in the window. */
+const both = explainMove(
+  { symbol: "B", changePercent: 12, sector: "Retail" },
+  { earnings: earningsPayload({}),
+    news: newsPayload([{ title: "B upgraded to outperform", created: "Sep 4, 2026", url: "/u" }]) },
+  sectors, SESSION);
+eq("results outrank an analyst call", both.verdict.kind, "results");
+
+/* Law-firm notices follow a fall; they are never the reason for one. */
+const lawFirm = explainMove(
+  { symbol: "S", changePercent: -22, sector: "Retail" },
+  { news: newsPayload([
+      { title: "INVESTOR ALERT: Rosen Law Firm announces class action on behalf of S investors",
+        created: "Sep 4, 2026", url: "/law" }]) },
+  sectors, SESSION);
+eq("a class-action notice is not offered as a cause", lawFirm.unexplained, true);
+check("and it is counted as set aside",
+      /set aside/.test(lawFirm.evidence.find((e) => e.kind === "coverage")?.detail ?? "") === false,
+      "no coverage block should exist at all");
+eq("so no coverage evidence is shown", lawFirm.evidence.some((e) => e.kind === "coverage"), false);
+
+/* The feed tags each piece with the companies it is about. One tagged for
+   other companies and not this one is not evidence about this one. */
+const otherCompany = explainMove(
+  { symbol: "S", changePercent: -22, sector: "Retail" },
+  { news: newsPayload([
+      { title: "Beta Corp agrees to acquire Gamma Inc", created: "Sep 4, 2026", url: "/o",
+        primarysymbol: "beta", related_symbols: ["beta|stocks", "gamma|stocks"] }]) },
+  sectors, SESSION);
+eq("a piece about other companies is not a cause", otherCompany.unexplained, true);
+eq("and no coverage block is built from it",
+   otherCompany.evidence.some((e) => e.kind === "coverage"), false);
+
+/* A listicle mentioning forty tickers explains nothing about any of them. */
+eq("roundups are recognised",
+   classifyHeadline({ title: "7 Best AI Stocks To Buy Now" }).key, "roundup");
+eq("so are market wraps",
+   classifyHeadline({ title: "Stocks Rally as Crude Prices and Bond Yields Fall" }).key, "roundup");
+eq("and multi-company pieces",
+   classifyHeadline({ title: "Biotech Stocks In Focus: Aethlon, Tiziana, Capricor" }).key, "roundup");
+/* A market wrap that mentions the S&P 500 in its body is not an index change. */
+eq("a body is only read when the title just reports the move",
+   classifyHeadline({ title: "Acme announces $200 million share repurchase program",
+                      description: "The S&P 500 index rose on the day." }).key, "capital");
+eq("headlines that only report the move are marked as such",
+   classifyHeadline({ title: "Why Acme Stock Is Soaring Today" }).key, "move");
+eq("a body naming the event is read when the title does not",
+   classifyHeadline({ title: "Why Acme Stock Is Soaring Today",
+                      description: "The FDA approved the company's lead drug on Friday." }).key,
+   "regulatory");
+/* News that usually moves a stock the other way is flagged, not swallowed. */
+const backwards = classifyHeadline(
+  { title: "Acme prices $200 million public offering" }, 14);
+eq("an offering alongside a rise is flagged", backwards.mismatch, true);
+check("and scored down for it", backwards.base < 75, String(backwards.base));
+
+eq("an excerpt reads past a company suffix",
+   excerpt("U.S. drone company Swarmer, Inc. agreed the deal on Thursday. More followed."),
+   "U.S. drone company Swarmer, Inc. agreed the deal on Thursday.");
+eq("an excerpt stops at the first sentence",
+   excerpt("(RTTNews) - Acme said it will buy Beta. More detail followed later."),
+   "Acme said it will buy Beta.");
+
+/* ============ weekly and monthly movers ============ */
+
+eq("a day's window is the session itself", periodWindow("day", SESSION),
+   { start: SESSION, end: SESSION });
+eq("a week's window is seven sessions to it", periodWindow("week", SESSION),
+   { start: "2026-08-29", end: SESSION });
+eq("a month's window is the month to it", periodWindow("month", SESSION),
+   { start: "2026-08-05", end: SESSION });
+eq("an unknown period falls back to the day", periodWindow("year", SESSION),
+   { start: SESSION, end: SESSION });
+
+/* The scanner's rows are joined onto the same universe, so every floor and
+   filter applies identically whichever period is chosen. */
+const perf = performanceMap({ data: [
+  { s: "NASDAQ:AAA", d: ["AAA", 12.5, 30] },
+  { s: "NYSE:BBB", d: ["BBB", null, -4] },
+]});
+eq("the scanner's rows are keyed by symbol", perf.AAA, { week: 12.5, month: 30 });
+eq("and a missing figure stays missing", perf.BBB.week, null);
+const swapped = applyPeriod([{ symbol: "AAA", changePercent: 1.2 }], perf, "week");
+eq("the period's move replaces the day's", swapped[0].changePercent, 12.5);
+eq("and the day's is kept alongside", swapped[0].dayChange, 1.2);
+eq("the day period leaves rows untouched",
+   applyPeriod([{ symbol: "AAA", changePercent: 1.2 }], perf, "day")[0].changePercent, 1.2);
+check("the scanner is asked for both windows",
+      PERIOD_COLUMNS.week === "Perf.W" && PERIOD_COLUMNS.month === "Perf.1M", "");
+
+/* Which sessions a weekly move actually happened on. One violent day points at
+   an event that can be dated; a steady drift does not. */
+const closes = closesFor;
+const spike = closes([
+  ["08/28/2026", 10], ["08/31/2026", 10.1], ["09/01/2026", 10.05],
+  ["09/02/2026", 13.5], ["09/03/2026", 13.6], ["09/04/2026", 13.7],
+]);
+const spikePath = pricePath(spike, periodWindow("week", SESSION), 35.6);
+eq("a single violent session is identified", spikePath.shape, "one-day");
+eq("and dated", spikePath.keyDates, ["2026-09-02"]);
+
+const creep = closes([
+  ["08/28/2026", 10], ["08/31/2026", 10.5], ["09/01/2026", 11],
+  ["09/02/2026", 11.5], ["09/03/2026", 12], ["09/04/2026", 12.5],
+]);
+eq("a steady climb is called a drift",
+   pricePath(creep, periodWindow("week", SESSION), 25).shape, "drift");
+/* Closes that do not add up to the move cannot locate it — a recent listing or
+   a gap in the feed. Saying nothing beats naming the wrong day. */
+eq("an incomplete history locates nothing",
+   pricePath(creep, periodWindow("week", SESSION), 206), null);
+eq("closes are read oldest first", parseHistory(spike)[0].date, "2026-08-28");
+check("and turned into per-session moves",
+      Math.abs(sessionMoves(parseHistory(spike))[0].pct - 1) < 1e-9, "");
+
+/* Over a week, news is weighed against the day the price actually moved. */
+const weekly = explainMove(
+  { symbol: "W", changePercent: 35.6, sector: "Retail" },
+  { history: spike,
+    news: newsPayload([
+      { title: "W announces FDA approval of its lead product", created: "Sep 2, 2026", url: "/a" },
+      { title: "W names new chief marketing officer", created: "Aug 30, 2026", url: "/b" },
+    ]) },
+  sectors, SESSION, { period: "week", market: 0.3 });
+eq("the biggest day is shown as evidence",
+   weekly.evidence.some((e) => e.kind === "path"), true);
+eq("news dated on that day wins", weekly.verdict.kind, "regulatory");
+check("and the panel says which day it turns on",
+      /2 Sep/.test(weekly.evidence.find((e) => e.kind === "path").headline),
+      weekly.evidence.find((e) => e.kind === "path").headline);
+
+/* A sector has to move further over a month before it explains anything. */
+const monthlySectors = { Energy: { median: -4, count: 40 } };
+const monthly = explainMove({ symbol: "OIL", changePercent: -4.2, sector: "Energy" },
+                            {}, monthlySectors, SESSION, { period: "month" });
+eq("4% in a month is not a sector story", monthly.verdict.kind, "none");
+const weeklySector = explainMove({ symbol: "OIL", changePercent: -4.2, sector: "Energy" },
+                                 {}, monthlySectors, SESSION, { period: "week" });
+eq("but it is over a week", weeklySector.verdict.kind, "sector");
+check("the sector bars rise with the window",
+      PERIODS.day.sectorBar < PERIODS.week.sectorBar &&
+      PERIODS.week.sectorBar < PERIODS.month.sectorBar, "");
 
 const failed = results.filter(r => !r.ok);
 document.getElementById("out").innerHTML = results.map(r =>

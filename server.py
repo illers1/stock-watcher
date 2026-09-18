@@ -982,7 +982,7 @@ def run_screen(opts):
 
 
 # --------------------------------------------------------------------------
-# Daily movers. Mirrors netlify/lib/movers.mjs.
+# Movers over a day, week or month. Mirrors netlify/lib/movers.mjs.
 # --------------------------------------------------------------------------
 
 def sector_moves(rows):
@@ -1003,14 +1003,50 @@ def sector_moves(rows):
     return out
 
 
+SCANNER_URL = "https://scanner.tradingview.com/america/scan"
+PERIOD_COLUMNS = {"week": "Perf.W", "month": "Perf.1M"}
+HISTORY_DAYS = 45
+
+
+def fetch_performance():
+    """Week and month % change for every US listing, in one request. The
+    universe feed only carries the day's change."""
+    body = json.dumps({
+        "columns": ["name", PERIOD_COLUMNS["week"], PERIOD_COLUMNS["month"]],
+        "filter": [
+            {"left": "type", "operation": "in_range", "right": ["stock", "dr"]},
+            {"left": "exchange", "operation": "in_range", "right": ["NASDAQ", "NYSE", "AMEX"]},
+        ],
+        "range": [0, 20000],
+    }).encode("utf-8")
+    req = urllib.request.Request(SCANNER_URL, data=body, method="POST", headers={
+        "User-Agent": UA, "Accept": "application/json", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    out = {}
+    for row in data.get("data") or []:
+        d = row.get("d") or []
+        if len(d) < 3 or not d[0]:
+            continue
+        fin = lambda v: v if isinstance(v, (int, float)) else None
+        out[str(d[0]).upper()] = {"week": fin(d[1]), "month": fin(d[2])}
+    return out
+
+
 def fetch_movers(opts):
+    period = opts.get("period") if opts.get("period") in PERIOD_COLUMNS else "day"
     universe, session_date, asof_label = fetch_universe()
+    if period != "day":
+        perf = fetch_performance()
+        universe = [dict(r, dayChange=r["changePercent"],
+                         changePercent=(perf.get(r["symbol"]) or {}).get(period))
+                    for r in universe]
     lo, hi = CAP_BANDS.get(opts["cap"], CAP_BANDS["any"])
     sector = opts["sector"].lower() if opts["sector"] and opts["sector"] != "any" else None
 
     lo = max(lo, MIN_MARKET_CAP)
     min_price = max(MIN_PRICE, opts["minPrice"])
-    tradeable = []
+    matched = []
     for r in universe:
         cap = r["marketCap"]
         if cap is None or cap < lo or cap > hi:
@@ -1019,18 +1055,24 @@ def fetch_movers(opts):
             continue
         if sector and str(r.get("sector") or "").lower() != sector:
             continue
-        if re.search(r"[.^]", r["symbol"]) or r["changePercent"] is None:
+        if re.search(r"[.^]", r["symbol"]):  # warrants, units, preference lines
             continue
-        tradeable.append(r)
+        matched.append(r)
+    # A few listings carry no weekly or monthly figure; they are dropped, and
+    # counted, so the page can say so rather than quietly narrowing the field.
+    tradeable = [r for r in matched if r["changePercent"] is not None]
 
     count = max(1, min(50, opts["count"]))
     by_move = sorted(tradeable, key=lambda r: r["changePercent"], reverse=True)
+    all_moves = sorted(r["changePercent"] for r in tradeable)
     return {
-        "sessionDate": session_date, "asOfLabel": asof_label,
+        "sessionDate": session_date, "asOfLabel": asof_label, "period": period,
         "gainers": by_move[:count],
         "losers": list(reversed(by_move[-count:])),
         "sectors": sector_moves(tradeable),
+        "market": all_moves[len(all_moves) // 2] if all_moves else None,
         "tradeable": len(tradeable),
+        "unpriced": len(matched) - len(tradeable),
         "universeSize": len(universe),
     }
 
@@ -1042,12 +1084,22 @@ def fetch_mover_why(symbol):
             return raw_json(url, timeout=10)
         except Exception:
             return None
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    today = datetime.date.today()
+    since = today - datetime.timedelta(days=HISTORY_DAYS)
+    with ThreadPoolExecutor(max_workers=3) as pool:
         earnings = pool.submit(one, "%s/company/%s/earnings-surprise" % (NASDAQ, enc))
         news = pool.submit(one, "%s/news/topic/articlebysymbol?%s" % (
             NASDAQ, urllib.parse.urlencode(
-                {"q": "%s|stocks" % symbol, "offset": "0", "limit": "6", "fallback": "true"})))
-        return {"symbol": symbol, "earnings": earnings.result(), "news": news.result()}
+                {"q": "%s|stocks" % symbol, "offset": "0", "limit": "20",
+                 # The feed answers with general market stories anyway when it
+                 # has no coverage; movers-model.mjs drops those by their tags.
+                 "fallback": "false"})))
+        history = pool.submit(one, "%s/quote/%s/historical?%s" % (
+            NASDAQ, enc, urllib.parse.urlencode({
+                "assetclass": "stocks", "fromdate": since.isoformat(),
+                "todate": today.isoformat(), "limit": "60"})))
+        return {"symbol": symbol, "earnings": earnings.result(),
+                "news": news.result(), "history": history.result()}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -1207,7 +1259,9 @@ class Handler(SimpleHTTPRequestHandler):
                 except ValueError:
                     return default
             cap = (params.get("cap") or ["any"])[0]
+            period = (params.get("period") or ["day"])[0]
             opts = {
+                "period": period if period in PERIOD_COLUMNS else "day",
                 "cap": cap if cap in CAP_BANDS else "any",
                 "sector": (params.get("sector") or ["any"])[0],
                 "minPrice": max(MIN_PRICE, mv_int("minPrice", MIN_PRICE)),
@@ -1218,22 +1272,24 @@ class Handler(SimpleHTTPRequestHandler):
                 result.update({"filters": opts, "asOf": time.time(), "error": None})
                 return self.send_json(result)
             except Exception as exc:
+                what = ("Movers failed" if opts["period"] == "day"
+                        else "Weekly and monthly changes are unavailable right now")
                 return self.send_json({"gainers": [], "losers": [], "sectors": {},
                                        "filters": opts, "asOf": None,
-                                       "error": "Movers failed (%s)" % type(exc).__name__})
+                                       "error": "%s (%s)" % (what, type(exc).__name__)})
 
         if parsed.path == "/api/mover-why":
             symbol = (params.get("symbol") or [""])[0].strip().upper()
             if not symbol or not SYMBOL_RE.match(symbol):
                 return self.send_json({"symbol": symbol, "earnings": None, "news": None,
-                                       "error": "A valid symbol is required"})
+                                       "history": None, "error": "A valid symbol is required"})
             try:
                 payload = fetch_mover_why(symbol)
                 payload["error"] = None
                 return self.send_json(payload)
             except Exception as exc:
                 return self.send_json({"symbol": symbol, "earnings": None, "news": None,
-                                       "error": "Lookup failed (%s)" % type(exc).__name__})
+                                       "history": None, "error": "Lookup failed (%s)" % type(exc).__name__})
 
         if parsed.path == "/":
             self.path = "/index.html"

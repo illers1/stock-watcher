@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Daily Movers — Stock Watcher</title>
+<title>Movers — Stock Watcher</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>⚡</text></svg>">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -39,12 +39,22 @@
 
 <main>
   <p class="lede">
-    The biggest moves of the last completed session, and what was happening around
-    them &mdash; results, headlines, and how the rest of the sector did. Open a row
-    for the detail.
+    The biggest moves over the last completed session, the past week or the past
+    month &mdash; and what was happening around them: results, the headlines that
+    name an actual event, which day the move really happened on, and how the rest
+    of the sector did. Open a row to see the likeliest reason and the evidence
+    behind it.
   </p>
 
   <form class="filters" id="filters" autocomplete="off">
+    <label class="sel">
+      <span>Period <em class="filter-why">how far back the move is measured</em></span>
+      <select id="period">
+        <option value="day" selected>Day</option>
+        <option value="week">Week</option>
+        <option value="month">Month</option>
+      </select>
+    </label>
     <label class="sel">
       <span>Size <em class="filter-why">market-cap band</em></span>
       <select id="cap">
@@ -83,11 +93,11 @@
 
   <div class="movers-grid">
     <section>
-      <h2 class="movers-head up">Biggest gainers</h2>
+      <h2 class="movers-head up" id="gainersHead">Biggest gainers</h2>
       <div id="gainers" class="mover-list"></div>
     </section>
     <section>
-      <h2 class="movers-head down">Biggest losers</h2>
+      <h2 class="movers-head down" id="losersHead">Biggest losers</h2>
       <div id="losers" class="mover-list"></div>
     </section>
   </div>
@@ -95,11 +105,14 @@
   <p id="empty" class="empty" hidden>Nothing matches these filters.</p>
 
   <p class="disclaimer">
-    The evidence beside each move is what else was happening at the time, not a
-    demonstrated cause. A company that reported hours earlier is usually the
-    reason; headlines describe a move at least as often as they explain one; and
-    a stock that moved with its sector may have done nothing itself. Where
-    nothing turns up, it says so rather than reaching for the nearest headline.
+    The reason given for each move is the reading its evidence best supports, not
+    a demonstrated cause &mdash; which is why it is labelled &ldquo;most
+    likely&rdquo; or &ldquo;possibly&rdquo; rather than stated flatly. A company
+    that reported hours earlier is usually the reason; headlines describe a move
+    at least as often as they explain one; law-firm notices follow falls rather
+    than cause them, so they are set aside; and a stock that moved with its sector
+    may have done nothing itself. Where nothing turns up, it says so rather than
+    reaching for the nearest headline.
   </p>
 </main>
 
