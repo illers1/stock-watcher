@@ -30,7 +30,10 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".data")
+# Shared group lists. The Mac app points this at Application Support, since an
+# app must not write inside its own bundle.
+DATA_DIR = (os.environ.get("STOCK_WATCHER_DATA")
+            or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".data"))
 
 QUOTE_URL = "https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol"
 SEARCH_URL = "https://query1.finance.yahoo.com/v1/finance/search"
@@ -1450,8 +1453,23 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--no-open", action="store_true", help="don't open a browser")
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--exit-with-parent", action="store_true",
+                    help="stop when the program that started this one goes away")
     args = ap.parse_args()
     VERBOSE[0] = args.verbose
+
+    if args.exit_with_parent:
+        # The Mac app starts this server and stops it on quit, but a force quit
+        # or a crash skips that. An orphaned process is re-parented, so a
+        # changed parent id means whoever started this server is gone.
+        parent = os.getppid()
+
+        def watch_parent():
+            while True:
+                time.sleep(2)
+                if os.getppid() != parent:
+                    os._exit(0)
+        threading.Thread(target=watch_parent, daemon=True).start()
 
     socketserver.TCPServer.allow_reuse_address = True
     try:

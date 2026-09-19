@@ -4,3 +4,6 @@ node_modules/
 
 # Local shared-watchlist storage; the deployed site uses Netlify Blobs.
 .data/
+
+# Built apps (desktop/mac/build.sh)
+dist/

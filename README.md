@@ -482,6 +482,47 @@ Two things worth knowing on iOS:
 A redeploy is picked up on the next launch: every request tries the network
 first and falls back to the cache only when the network fails.
 
+## The Mac app
+
+The whole thing runs without Netlify. `server.py` mirrors every function the
+site uses, so the Mac app is simply the same pages and the same server,
+packaged: a native window that starts the server when it opens and stops it
+when it quits. No browser, and nothing to install beyond the Python that
+macOS already provides.
+
+```
+./desktop/mac/build.sh
+```
+
+That builds `dist/Stock Watcher.app` and a zip of it for moving to another Mac.
+It needs the Command Line Tools (`xcode-select --install`), not Xcode. The app
+carries its own copy of the pages, so run the build again after changing
+anything.
+
+A few details:
+
+- **It keeps its own watchlist.** The watchlist lives in the page's storage,
+  which belongs to one address, so the app's list starts separate from the
+  website's. The port is fixed at 8790 for that reason — a new port each launch
+  would mean an empty watchlist each launch.
+- **Shared group lists** are stored in `~/Library/Application Support/Stock
+  Watcher`, since an app must not write inside itself. The server log is at
+  `~/Library/Logs/Stock Watcher.log` (Help → Show Server Log).
+- **Links out** — articles, SEC filings — open in your normal browser.
+- **It cleans up after itself.** A force quit or a crash skips the app's own
+  shutdown, so the server also stops by itself once the app is gone, and a
+  launch replaces any server an earlier run left behind.
+- **On another Mac** the zip is unsigned by a developer account, so the first
+  open is right-click → Open, then Open again.
+
+### On a phone
+
+**Stock Watcher → Open on Phone…** lets a phone on the same Wi-Fi use the app
+through this Mac. It shows a QR code; scan it, then Add to Home Screen, and it
+opens like an app whenever the Mac is awake and on that network. While it is on,
+anyone on the network can reach it, so it is off by default, asks first, and
+turns off on quit.
+
 ## Running it locally
 
 ```bash
