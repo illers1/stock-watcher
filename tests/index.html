@@ -1741,6 +1741,9 @@ check("every ceiling is under the limit",
 const assets = { fetch: async (req) => new Response("asset:" + new URL(req.url).pathname) };
 const hit = (path, init) => worker.fetch(new Request("https://x.test" + path, init), { ASSETS: assets });
 eq("pages go to the static assets", await (await hit("/movers.html")).text(), "asset:/movers.html");
+/* "/" has no file of its own: HTML handling is off so that "movers.html" is
+   served as written rather than redirected to "/movers". */
+eq("the front door serves the watchlist", await (await hit("/")).text(), "asset:/index.html");
 const missing = await hit("/api/nope");
 eq("an unknown endpoint is a 404", missing.status, 404);
 eq("and is not cached", missing.headers.get("Cache-Control"), "no-store");

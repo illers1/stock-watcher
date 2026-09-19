@@ -128,6 +128,11 @@ export async function group(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // The site's front door. HTML handling is off so that "movers.html" is
+    // served as written rather than redirected, which leaves "/" to answer here.
+    if (url.pathname === "/") {
+      return env.ASSETS.fetch(new Request(new URL("/index.html", url), request));
+    }
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     if (url.pathname === "/api/group") return group(request, env);
 

@@ -13,7 +13,13 @@
   "assets": {
     "directory": "./static",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*"]
+    // Every link in the pages is written "movers.html", so serve exactly that.
+    // Cloudflare's default would redirect it to "/movers", which costs a round
+    // trip on each navigation and leaves the service worker holding redirected
+    // responses, which a browser will not use for a page it is navigating to.
+    // The bare "/" has no file of its own, so the Worker answers it.
+    "html_handling": "none",
+    "run_worker_first": ["/api/*", "/"]
   },
 
   // Serve cached API answers without running the Worker at all. Each
@@ -22,6 +28,11 @@
 
   // Shared group lists. D1 rather than KV: see cloudflare/groups-d1.mjs.
   "d1_databases": [{ "binding": "GROUPS" }],
+
+  // One public address, the one in the README. Per-version preview URLs are
+  // reachable by anyone who has them and are not needed here.
+  "workers_dev": true,
+  "preview_urls": false,
 
   "observability": { "enabled": true }
 }
