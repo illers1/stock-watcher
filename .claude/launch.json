@@ -4,13 +4,21 @@
     {
       "name": "stock-watcher",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["server.py", "--no-open", "--port", "8765"],
+      "runtimeArgs": [
+        "server.py",
+        "--no-open",
+        "--port",
+        "8765"
+      ],
       "port": 8765
     },
     {
       "name": "tests",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8000"],
+      "runtimeArgs": [
+        "tests/serve.py",
+        "8000"
+      ],
       "port": 8000
     }
   ]

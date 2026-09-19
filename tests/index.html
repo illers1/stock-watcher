@@ -41,6 +41,11 @@ const { explainMove, summariseCause, toIsoDate, periodWindow, pricePath, session
         itemsFromTitles, bodySummary, reportedDirection } =
   await import("../static/movers-model.mjs" + v);
 const { filingText, MATERIAL_FORMS, READ_TEXT } = await import("../netlify/lib/filings.mjs" + v);
+const { default: worker, cachePolicy, withinCeiling, group: workerGroup, ROUTES, REQUEST_CEILINGS } =
+  await import("../cloudflare/worker.mjs" + v);
+const { d1Backend, Conflict, SCHEMA, resetSchemaForTests } = await import("../cloudflare/groups-d1.mjs" + v);
+const { quickMoney, readMoney, fetchUniverse } = await import("../netlify/lib/screener.mjs" + v);
+const { fetchMovers } = await import("../netlify/lib/movers.mjs" + v);
 const { sectorMoves, performanceMap, applyPeriod, PERIOD_COLUMNS } =
   await import("../netlify/lib/movers.mjs" + v);
 const { toIso, longDateToIso, splitDisplayName, regulatoryDate, buildCatalysts,
@@ -1681,6 +1686,136 @@ const weakWords = `${weakFiling.verdict.text} ${weakFiling.verdict.warning ?? ""
 check("and says why it is unlikely to be the reason", /went the other way/.test(weakWords), weakWords);
 check("in words that fit a filing", !/article|news like this/i.test(weakWords), weakWords);
 eq("and never as the likely reason", weakFiling.verdict.confidence, "possible");
+
+/* ============ Cloudflare ============ */
+
+/* The number reader behind the market-wide list. The quick one must give the
+   same answer as the original on every form, or the port changes the data. */
+for (const input of ["$12.34", "1,234,567", "-2.5%", "0", "$0.00", "", "  ", "N/A", "NA", "(1.23)",
+                     "-$3.2", "$1,234.50", " 7 ", "12%", null, undefined, 0, 42.5, "abc"]) {
+  eq(`quickMoney agrees with money on ${JSON.stringify(input)}`, quickMoney(input), readMoney(input));
+}
+
+/* A stubbed feed is never cached, so one test cannot see another's market. */
+const feedOf = (rows) => async () => new Response(JSON.stringify({ data: { rows } }), { status: 200 });
+const u1 = await fetchUniverse(feedOf([{ symbol: "AAA", lastsale: "$5", pctchange: "1%", marketCap: "1,000,000,000" }]));
+const u2 = await fetchUniverse(feedOf([{ symbol: "BBB", lastsale: "$6", pctchange: "2%", marketCap: "2,000,000,000" }]));
+eq("the universe is not cached across stubbed feeds", [u1.rows[0].symbol, u2.rows[0].symbol], ["AAA", "BBB"]);
+
+/* An empty market is a failed feed, and must not be cached as a quiet day. */
+let emptyFailed = false;
+try { await fetchMovers({}, feedOf([])); } catch { emptyFailed = true; }
+eq("an empty market list is an error, not a result", emptyFailed, true);
+
+/* One Cache-Control header, from the two each function states. */
+const policed = cachePolicy(new Response("{}", { status: 200, headers: {
+  "Cache-Control": "public, max-age=120",
+  "Netlify-CDN-Cache-Control": "public, max-age=600, stale-while-revalidate=3600" } }));
+eq("the browser and CDN policies are combined",
+   policed.headers.get("Cache-Control"),
+   "public, max-age=120, s-maxage=600, stale-while-revalidate=3600, stale-if-error=3600");
+eq("the Netlify-only header is dropped", policed.headers.get("Netlify-CDN-Cache-Control"), null);
+eq("API responses are marked nosniff", policed.headers.get("X-Content-Type-Options"), "nosniff");
+eq("a response with no policy is never cached",
+   cachePolicy(new Response("{}", { status: 200 })).headers.get("Cache-Control"), "no-store");
+eq("nor is a failure, whatever it says",
+   cachePolicy(new Response("{}", { status: 500, headers: { "Cache-Control": "public, max-age=600" } }))
+     .headers.get("Cache-Control"), "no-store");
+eq("an explicit no-store stays no-store",
+   cachePolicy(new Response("{}", { status: 200, headers: { "Cache-Control": "no-store" } }))
+     .headers.get("Cache-Control"), "no-store");
+eq("a policy with no CDN figures uses the browser's",
+   cachePolicy(new Response("{}", { status: 200, headers: { "Cache-Control": "public, max-age=900" } }))
+     .headers.get("Cache-Control"), "public, max-age=900, s-maxage=900");
+
+/* Held under the free plan's 50 outbound requests. */
+const ceil = (path) => { const u = new URL("https://x.test" + path); return new URL(withinCeiling(new Request(u), u).url); };
+eq("a 60-day calendar is held to 45", ceil("/api/calendar?days=60").searchParams.get("days"), "45");
+eq("a 30-day calendar is left alone", ceil("/api/calendar?days=30").searchParams.get("days"), "30");
+eq("the insider feed is held to 45", ceil("/api/insider-feed?limit=60").searchParams.get("limit"), "45");
+eq("other endpoints are untouched", ceil("/api/movers?count=50").searchParams.get("count"), "50");
+check("every ceiling is under the limit",
+      Object.values(REQUEST_CEILINGS).every((c) => c.max < 50), "");
+
+/* Routing. */
+const assets = { fetch: async (req) => new Response("asset:" + new URL(req.url).pathname) };
+const hit = (path, init) => worker.fetch(new Request("https://x.test" + path, init), { ASSETS: assets });
+eq("pages go to the static assets", await (await hit("/movers.html")).text(), "asset:/movers.html");
+const missing = await hit("/api/nope");
+eq("an unknown endpoint is a 404", missing.status, 404);
+eq("and is not cached", missing.headers.get("Cache-Control"), "no-store");
+eq("a GET endpoint refuses POST", (await hit("/api/movers", { method: "POST" })).status, 405);
+const invalid = await hit("/api/mover-why");
+eq("a handler's own error comes through", (await invalid.json()).error, "A valid symbol is required");
+eq("and is not cached", invalid.headers.get("Cache-Control"), "no-store");
+check("every Netlify function is routed",
+      ["analysis", "calendar", "catalysts", "earnings", "insider-feed", "mover-why", "movers", "news",
+       "quotes", "screen", "search"].every((n) => typeof ROUTES["/api/" + n] === "function"), "");
+
+/* Group lists on D1. A small stand-in for the three statements used, with a
+   hook for somebody else's write landing between an edit's read and its write. */
+function fakeD1() {
+  const rows = new Map();
+  const db = { rows, interleave: null, statements: [] };
+  db.prepare = (sql) => {
+    const exec = (args) => {
+      db.statements.push(sql.split(" ")[0]);
+      if (sql.startsWith("CREATE")) return { meta: { changes: 0 } };
+      if (sql.startsWith("SELECT")) return rows.get(args[0]) ?? null;
+      if (db.interleave) { const f = db.interleave; db.interleave = null; f(); }
+      if (sql.startsWith("INSERT")) {
+        if (rows.has(args[0])) return { meta: { changes: 0 } };
+        rows.set(args[0], { state: args[1], version: 1 });
+        return { meta: { changes: 1 } };
+      }
+      const [state, code, version] = args;                      // UPDATE
+      const row = rows.get(code);
+      if (!row || row.version !== version) return { meta: { changes: 0 } };
+      rows.set(code, { state, version: row.version + 1 });
+      return { meta: { changes: 1 } };
+    };
+    const bound = (args) => ({ first: async () => exec(args), run: async () => exec(args) });
+    return { bind: (...args) => bound(args), run: async () => exec([]) };
+  };
+  return db;
+}
+resetSchemaForTests();
+const d1 = fakeD1();
+const post = async (body) => (await workerGroup(new Request("https://x.test/api/group", {
+  method: "POST", body: JSON.stringify(body) }), { GROUPS: d1 })).json();
+const made = await post({ action: "create" });
+check("a group is created in D1", made.code && d1.rows.size === 1, JSON.stringify(made));
+eq("the table is created on first use", d1.statements[0], "CREATE");
+await post({ action: "add", code: made.code, symbol: "aapl", by: "Will" });
+eq("an addition is stored", (await post({ action: "get", code: made.code })).symbols.map((x) => x.symbol), ["AAPL"]);
+
+/* Two people adding at the same instant. The second edit reads the list, then
+   the first lands before it writes: the version no longer matches, the edit is
+   recomputed from the fresh list, and both additions survive. */
+d1.interleave = () => {
+  const row = d1.rows.get(made.code);
+  const state = JSON.parse(row.state);
+  state.symbols.push({ symbol: "MSFT", addedBy: "Emma", addedAt: 1 });
+  d1.rows.set(made.code, { state: JSON.stringify(state), version: row.version + 1 });
+};
+await post({ action: "add", code: made.code, symbol: "nvda", by: "Charlotte" });
+eq("a simultaneous edit loses nothing",
+   (await post({ action: "get", code: made.code })).symbols.map((x) => x.symbol).sort(), ["AAPL", "MSFT", "NVDA"]);
+
+/* The check underneath: a write based on a read that somebody has since
+   overtaken does not land, and says so. */
+const racer = d1Backend(d1);
+const before = await racer.read(made.code);
+d1.rows.set(made.code, { ...d1.rows.get(made.code), version: d1.rows.get(made.code).version + 1 });
+let conflicted = false;
+try { await racer.write(made.code, before); } catch (e) { conflicted = e instanceof Conflict; }
+eq("a write from a stale read is refused", conflicted, true);
+eq("group edits need POST",
+   (await workerGroup(new Request("https://x.test/api/group"), { GROUPS: d1 })).status, 405);
+eq("missing storage is reported, not thrown",
+   (await (await workerGroup(new Request("https://x.test/api/group", { method: "POST", body: "{}" }), {})).json()).error,
+   "Group storage is not configured");
+check("the schema keys groups by code", /code TEXT PRIMARY KEY/.test(SCHEMA), "");
 
 /* ============ weekly and monthly movers ============ */
 

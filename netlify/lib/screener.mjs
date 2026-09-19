@@ -52,6 +52,23 @@ const money = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
+/* The same reading as money(), for the 28,000-odd fields in the market-wide
+   list, without a regular expression per field — which was more than half the
+   cost of mapping it. The usual forms ("$12.34", "1,234,567", "-2.5%") are read
+   directly; anything else is handed to money(), so the answer never differs. */
+export function quickMoney(v) {
+  if (v === null || v === undefined) return null;
+  let s = typeof v === "string" ? v : String(v);
+  if (s.charCodeAt(0) === 36) s = s.slice(1);                       // "$"
+  if (s.endsWith("%")) s = s.slice(0, -1);
+  if (s.indexOf(",") !== -1) s = s.replaceAll(",", "");
+  const t = s.trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : money(v);
+}
+export const readMoney = money;
+
 async function get(url, doFetch, timeoutMs = 20000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -99,28 +116,64 @@ export async function fetchSessionDate(doFetch = fetch) {
   }
 }
 
+/* One parse of the market-wide list serves every request an instance handles
+   for a few minutes, whatever the filters: movers and the screen both start
+   from it, and parsing its 2 MB is most of what either costs. On Cloudflare's
+   free plan, where a request gets 10 ms of CPU, that is the difference between
+   working and not.
+
+   Only a finished result is shared. A load in progress is not handed to a
+   second request, because a Worker may not wait on I/O another request began.
+   And only a real fetch is cached, so tests that pass their own never see
+   another test's data. */
+export const UNIVERSE_TTL_MS = 3 * 60 * 1000;
+let universeCache = { at: 0, value: null };
+
 export async function fetchUniverse(doFetch = fetch) {
+  const shared = doFetch === globalThis.fetch;
+  if (shared && universeCache.value && Date.now() - universeCache.at < UNIVERSE_TTL_MS) {
+    return universeCache.value;
+  }
+  const value = await loadUniverse(doFetch);
+  if (shared && value.rows.length) universeCache = { at: Date.now(), value };
+  return value;
+}
+
+async function loadUniverse(doFetch) {
   const [res, session] = await Promise.all([
     get(`${SCREENER}?tableonly=true&limit=8000&offset=0&download=true`, doFetch, 25000),
     fetchSessionDate(doFetch),
   ]);
-  if (!res?.ok) return { rows: [], sessionDate: null, asOfLabel: null };
+  if (!res?.ok) return { rows: [], total: 0, sessionDate: null, asOfLabel: null };
   let body;
-  try { body = await res.json(); } catch { return { rows: [], sessionDate: null, asOfLabel: null }; }
+  try { body = await res.json(); } catch { return { rows: [], total: 0, sessionDate: null, asOfLabel: null }; }
   const rows = body?.data?.rows ?? body?.data?.table?.rows ?? [];
   const asOfLabel = body?.data?.asOf ?? body?.data?.asof ?? session.asOfLabel;
-  const mapped = rows.map((r) => ({
-    symbol: String(r.symbol ?? "").toUpperCase(),
-    name: r.name ?? null,
-    price: money(r.lastsale),
-    changePercent: money(r.pctchange),
-    marketCap: money(r.marketCap),
-    volume: money(r.volume),
-    sector: r.sector || null,
-    industry: r.industry || null,
-    country: r.country || null,
-  })).filter((r) => r.symbol);
-  return { rows: mapped, sessionDate: parseAsOf(asOfLabel) ?? session.sessionDate, asOfLabel };
+  /* Every endpoint applies the universal floors before using a row, so a row
+     below them is only ever counted. It is counted here and not built: that is
+     about two rows in five, and building them was a large share of the cost. */
+  let total = 0;
+  const mapped = [];
+  for (const r of rows) {
+    const symbol = String(r.symbol ?? "").toUpperCase();
+    if (!symbol) continue;
+    total++;
+    const price = quickMoney(r.lastsale);
+    const marketCap = quickMoney(r.marketCap);
+    if (price === null || price < MIN_PRICE || marketCap === null || marketCap < MIN_MARKET_CAP) continue;
+    mapped.push({
+      symbol,
+      name: r.name ?? null,
+      price,
+      changePercent: quickMoney(r.pctchange),
+      marketCap,
+      volume: quickMoney(r.volume),
+      sector: r.sector || null,
+      industry: r.industry || null,
+      country: r.country || null,
+    });
+  }
+  return { rows: mapped, total, sessionDate: parseAsOf(asOfLabel) ?? session.sessionDate, asOfLabel };
 }
 
 /**
@@ -178,7 +231,9 @@ export async function enrich(symbols, doFetch = fetch) {
 
 /** The whole funnel, for one set of filters. */
 export async function runScreen(opts = {}, doFetch = fetch) {
-  const { rows: universe, sessionDate, asOfLabel } = await fetchUniverse(doFetch);
+  const { rows: universe, total, sessionDate, asOfLabel } = await fetchUniverse(doFetch);
+  // An empty market is a failed feed, not a quiet day, and must not be cached as one.
+  if (!universe.length) throw new Error("market list unavailable");
   const matched = filterUniverse(universe, opts);
   const ordering = ORDERINGS[opts.order] ?? ORDERINGS.decliners;
   const ordered = matched.slice().sort(ordering.sort);
@@ -187,7 +242,7 @@ export async function runScreen(opts = {}, doFetch = fetch) {
   const quotes = await enrich(slice.map((r) => r.symbol), doFetch);
 
   return {
-    universeSize: universe.length,
+    universeSize: total,
     sessionDate, asOfLabel,
     matched: matched.length,
     examined: slice.length,

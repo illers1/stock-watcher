@@ -1,0 +1,7 @@
+# Security headers for the pages, on hosts that read a _headers file
+# (Cloudflare; Netlify also sets these from netlify.toml). The API sets its
+# own in cloudflare/worker.mjs, since these rules do not reach Worker responses.
+/*
+  X-Frame-Options: SAMEORIGIN
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin

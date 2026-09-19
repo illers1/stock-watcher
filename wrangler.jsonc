@@ -1,0 +1,27 @@
+// Stock Watcher on Cloudflare Workers. See cloudflare/worker.mjs.
+//
+// Deployed by Cloudflare from GitHub on every push to main ("npx wrangler
+// deploy"); nothing needs creating by hand. The D1 database for the shared
+// group lists is created on the first deploy and stays linked afterwards.
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "stock-watcher",
+  "main": "cloudflare/worker.mjs",
+  "compatibility_date": "2026-09-01",
+
+  // The pages, served by Cloudflare directly. /api/* goes to the Worker.
+  "assets": {
+    "directory": "./static",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Serve cached API answers without running the Worker at all. Each
+  // endpoint's own Cache-Control decides what is cached and for how long.
+  "cache": { "enabled": true },
+
+  // Shared group lists. D1 rather than KV: see cloudflare/groups-d1.mjs.
+  "d1_databases": [{ "binding": "GROUPS" }],
+
+  "observability": { "enabled": true }
+}

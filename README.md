@@ -426,7 +426,44 @@ The session date comes from the data feed rather than the clock. Working back
 from today over weekends alone gets every public holiday wrong — the first
 version captioned Friday's moves as Monday's, because that Monday was Labor Day.
 
-## Deploying it as a website
+## Deploying it on Cloudflare
+
+The site also runs on Cloudflare Workers' free plan, from the same code:
+`cloudflare/worker.mjs` routes `/api/*` to the functions in `netlify/functions/`
+unchanged, and Cloudflare serves `static/` directly. `wrangler.jsonc` is the
+whole configuration.
+
+1. Cloudflare dashboard → **Workers & Pages** → **Create application** →
+   **Import a repository**, and pick this repository. When Cloudflare asks for
+   access to GitHub, choose *Only select repositories*.
+2. Keep the project name **stock-watcher** — it must match `wrangler.jsonc` —
+   and leave the build settings as they are (deploy command
+   `npx wrangler deploy`). **Save and Deploy.**
+
+Every push to `main` deploys from then on. The D1 database behind the shared
+group lists is created on the first deploy; nothing is set up by hand.
+
+Three things differ from Netlify, all because of the free plan's limits:
+
+- **CPU.** A request gets 10 ms of CPU; waiting on the network does not
+  count, parsing does. Movers and the screen read a 2 MB market-wide list, so
+  that list is parsed once and shared across requests for a few minutes, rows
+  below the $3 / $25M floors are counted rather than built, and the ranking
+  sorts only its two ends. A cold call went from about 12.7 ms to 7 ms on the
+  machine this was measured on, against 3 ms for just reading the list; the
+  output was checked identical to the previous code across 180 filter
+  combinations on real data. **Workers Cache** is on, so a cached answer is
+  served without running the Worker at all, and refreshes happen in the
+  background (stale-while-revalidate). The movers page retries once if a cold
+  request still runs out.
+- **Outbound requests.** A request may make 50. The calendar (one page per
+  trading day) and the insider feed (one filing per entry) are held to 45.
+- **Group lists** are in D1 rather than a key-value store, which would bring
+  back the stale-read bug described in `netlify/functions/group.mjs`. Each edit
+  is also version-checked, so two people adding at the same instant both keep
+  their additions.
+
+## Deploying it on Netlify
 
 The repository is ready to deploy — there is no build step and no dependencies
 to install.

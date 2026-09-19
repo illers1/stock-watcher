@@ -83,8 +83,16 @@ import { loadWatchlist, saveWatchlist } from "./watchlist.mjs";
       period: view.period, cap: view.cap, sector: view.sector,
       minPrice: view.minPrice, count: view.count,
     });
-    return fetch("/api/movers?" + qs)
-      .then(function (r) { return r.json(); })
+    var load = function () {
+      return fetch("/api/movers?" + qs).then(function (r) { return r.json(); });
+    };
+    return load()
+      /* One retry. On a free Cloudflare plan the first request to a cold server
+         can run out of its CPU allowance while it reads the market-wide list;
+         the second, a moment later, lands on a warm one or on the cached answer. */
+      .catch(function () {
+        return new Promise(function (resolve) { setTimeout(resolve, 1200); }).then(load);
+      })
       .then(function (d) {
         if (gen !== generation) return;
         if (d.error) { els.banner.textContent = d.error; els.banner.hidden = false; }

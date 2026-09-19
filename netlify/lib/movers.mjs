@@ -40,9 +40,11 @@ async function get(url, doFetch, timeoutMs = 10000) {
   } catch { return null; } finally { clearTimeout(timer); }
 }
 
+/* Medians sort numbers, which a Float64Array does natively and several times
+   faster than an array with a comparator function. */
 const median = (values) => {
   if (!values.length) return null;
-  const sorted = values.slice().sort((a, b) => a - b);
+  const sorted = Float64Array.from(values).sort();
   return sorted[Math.floor(sorted.length / 2)];
 };
 
@@ -56,7 +58,7 @@ export function sectorMoves(rows) {
   }
   const out = {};
   for (const [sector, values] of buckets) {
-    const sorted = values.slice().sort((a, b) => a - b);
+    const sorted = Float64Array.from(values).sort();
     out[sector] = {
       count: values.length,
       // The median, because a handful of 40% moves would drag a mean around.
@@ -67,8 +69,18 @@ export function sectorMoves(rows) {
   return out;
 }
 
-/** Week and month % change for every US listing, keyed by symbol. */
+/** Week and month % change for every US listing, keyed by symbol. Shared
+    across requests for a few minutes, like the universe, and for the same reason. */
+let perfCache = { at: 0, value: null };
 export async function fetchPerformance(doFetch = fetch, timeoutMs = 20000) {
+  const shared = doFetch === globalThis.fetch;
+  if (shared && perfCache.value && Date.now() - perfCache.at < 3 * 60 * 1000) return perfCache.value;
+  const value = await loadPerformance(doFetch, timeoutMs);
+  if (shared && value && Object.keys(value).length) perfCache = { at: Date.now(), value };
+  return value;
+}
+
+async function loadPerformance(doFetch, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -111,12 +123,36 @@ export function applyPeriod(rows, perf, period) {
   }));
 }
 
+/**
+ * The biggest gainers and losers, exactly as a full descending sort would give
+ * them — ties included — without sorting the thousands of rows in between.
+ * The cut-off values come from a native numeric sort; only the rows at or past
+ * them are sorted with the comparator. A stable sort of a subset keeps the
+ * subset's rows in the order the full sort would, so the ends are identical.
+ */
+export function rankEnds(rows, count) {
+  const desc = (a, b) => b.changePercent - a.changePercent;
+  if (rows.length <= count * 2) {
+    const all = rows.slice().sort(desc);
+    return { top: all.slice(0, count), bottom: all.slice(-count).reverse() };
+  }
+  const values = Float64Array.from(rows, (r) => r.changePercent).sort();
+  const high = values[values.length - count];   // the count-th largest
+  const low = values[count - 1];                // the count-th smallest
+  return {
+    top: rows.filter((r) => r.changePercent >= high).sort(desc).slice(0, count),
+    bottom: rows.filter((r) => r.changePercent <= low).sort(desc).slice(-count).reverse(),
+  };
+}
+
 export async function fetchMovers(opts = {}, doFetch = fetch) {
   const period = PERIOD_COLUMNS[opts.period] ? opts.period : "day";
-  const [{ rows: raw, sessionDate, asOfLabel }, perf] = await Promise.all([
+  const [{ rows: raw, total, sessionDate, asOfLabel }, perf] = await Promise.all([
     fetchUniverse(doFetch),
     period === "day" ? null : fetchPerformance(doFetch),
   ]);
+  // An empty market is a failed feed, not a quiet day, and must not be cached as one.
+  if (!raw.length) throw new Error("market list unavailable");
   if (period !== "day" && !perf) throw new Error("performance feed unavailable");
   const universe = applyPeriod(raw, perf, period);
   const matched = filterUniverse(universe, {
@@ -130,19 +166,19 @@ export async function fetchMovers(opts = {}, doFetch = fetch) {
   const tradeable = matched.filter((r) => r.changePercent !== null);
 
   const count = Math.max(1, Math.min(50, opts.count ?? DEFAULT_COUNT));
-  const byMove = tradeable.slice().sort((a, b) => b.changePercent - a.changePercent);
+  const { top, bottom } = rankEnds(tradeable, count);
 
   return {
     // Taken from the feed rather than inferred: holidays make any guess wrong.
     sessionDate, asOfLabel, period,
-    gainers: byMove.slice(0, count),
-    losers: byMove.slice(-count).reverse(),
+    gainers: top,
+    losers: bottom,
     sectors: sectorMoves(tradeable),
     // The whole market's median, so a move can be set against everything.
     market: median(tradeable.map((r) => r.changePercent)),
     tradeable: tradeable.length,
     unpriced: matched.length - tradeable.length,
-    universeSize: universe.length,
+    universeSize: total,
   };
 }
 
